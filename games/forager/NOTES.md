@@ -302,8 +302,33 @@ client's *last reported position* (a sanity check against a peer that teleports 
 across the map — not anti-cheat). A refusal is answered with the reason, which the client
 `Trace`s, and the client rolls its optimistic placement back.
 
-**Protocol 2** — the packet set changed, so `coopProtocol` and the mock peer went 1 → 2; a
-v1 peer is now rejected at handshake instead of silently ignoring the new packet ids.
+**Protocol 2** — the packet set changed, so `coopProtocol` and the mock peer went 1 → 2;
+a v1 peer is now rejected at handshake instead of silently ignoring the new packet ids.
+
+**How this loader fails, learned the hard way (verified in the live build, 2026-10-20).**
+The first M2.1 deploy did nothing at all in game: no error on screen, no console line, F5
+dead. The loader's own console did say why:
+
+```
+Loading file: mods/Forager Coop/Net.gml...
+Mod failed to unit! Forager Coop/Net.gml[L137,c26]: Expected a statement, got number
+Exiting compile...
+```
+
+Two facts fall out of that, both worth knowing before writing any Forager mod:
+
+- **There are no value macros.** `#define COOP_PLACE_RANGE 448` is rejected: this loader
+  reads a macro body as *statements*, so a bare number is "Expected a statement, got
+  number" and the whole mod refuses to load. A constant has to be a global (M1 happened to
+  use none, which is why M1 loaded). Note the typo in the loader's message ("failed to
+  unit") if you ever grep for it.
+- **Not every GML builtin exists in this build.** `array_delete()` and
+  `variable_instance_exists()` are absent from the 107 MB `data.win`'s symbol table while
+  `array_get`, `array_push`, `array_length` and `instance_number` are present. Which
+  functions a build has is answerable offline by searching `data.win` for the name — and
+  that is now the mod's pre-deploy check (`tools/check_gml.py`, which also flags brackets,
+  duplicate `var`s in one block, wrong macro arity and the value-macro trap). A mod compile
+  itself reports only the *first* error, so an offline pass saves a round trip each time.
 
 ## Derived (our reading, not facts)
 
