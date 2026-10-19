@@ -420,6 +420,40 @@ selftest: 11 packets encode/parse correctly, spot-retry ok
 `tools/mock_e2e.ps1` still passes (`handshake, welcome, pong, structure table and INTENT_PLACE
 all seen`).
 
+**And the round trip, live 2026-10-20 (`0.0.7-m2e`), refusal and acceptance in one run:**
+
+```
+[03:20:25] -> INTENT_PLACE 'печь' at 853,660 (room 8, #29143, spot 1/10)
+[03:20:25] <- INTENT_REJECTED #29143: 'that spot is on water'
+[03:20:25]    retrying at another spot (water was at (853, 660))
+[03:20:25] -> INTENT_PLACE 'печь' at 594,654 (room 8, #7980, spot 2/10)
+[03:20:25] <- MUTATION seq=1 intent=#7980 room=8 'печь' at 594,654 depth -654
+[03:20:25]    accepted: ... the spot we asked for ((594, 654)) was land
+[03:20:25] <- MUTATION seq=2 intent=#0 room=8 'печь' at 594,654 depth -654
+```
+
+`seq=2` is the game's own `OnStructureSpawn` re-announcing the instance it just made, exactly as
+in the earlier M2.1 run. So the host's spot check is verified in **both** directions.
+
+**Two known gaps in the placement rules, raised by the owner after this run - one confirmed, one
+open. Neither is part of M2.1's wire work:**
+
+1. *A structure cannot stand on an occupied tile* (another heater, a tree, a rock). The host
+   currently checks **water only**. Nothing stops an intent for a spot the game would refuse, so
+   this is a real hole, not a hypothetical. Open question: is there a first-party predicate for
+   it? `WaterCollision` was luck - it is documented under *General Forager Behavior* and callable
+   directly. The tile/occupancy side shows `objTile`, `parSolid` (the parent of solid objects),
+   `objWateredTile`, and internal scripts `TileCollision`, `GridCollision`, `CheckTilemap`,
+   `CheckDirtRect` - **but the docs list no plain predicate** for "is this cell free". Trying
+   internal script names blind is expensive (a wrong name fails the whole COMPILE). Status:
+   `unknown`, needs a probe, not a guess.
+2. *A structure costs resources.* Right now `INTENT_PLACE` **creates the structure without
+   spending anything** - the host applies it directly, out of band from any inventory. So a
+   joining player builds for free, which is not acceptable in a real session. This cannot be
+   fixed before **the client's inventory is synchronised** (M2.2/M2.4): there is nothing yet to
+   charge. Ordering is therefore M2.2 (loot/resources) -> then a costed placement that the host
+   validates against the client's synced inventory.
+
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
 alternate gate/wall with period 2, and #68..#80 have no name at all. Rows #1..#45 and
