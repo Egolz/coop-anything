@@ -454,6 +454,34 @@ open. Neither is part of M2.1's wire work:**
    charge. Ordering is therefore M2.2 (loot/resources) -> then a costed placement that the host
    validates against the client's synced inventory.
 
+**Occupancy, first step: F12 (read-only probe), `0.0.8-m2f`.** The owner asked whether a
+structure can be placed on top of another structure, a tree or a rock, and the honest answer
+today is **yes it can - the host checks water only**. The documented modding API does **not**
+expose an occupancy predicate: `CoreFunctions/GeneralForagerBehavior` lists exactly three
+callable functions (`HasSkill`, `LighthouseCalculate`, `WaterCollision`), and the
+`CoreFunctions/Modding` reference has no "is this cell free" entry. So `WaterCollision` was
+lucky rather than representative - it happens to be documented *and* directly callable.
+
+F12 therefore **measures** the spot with calls already proven live in F10, and does not guess at
+a name:
+
+- it resolves `parStructure`, `parResource`, `parSolid`, `objTile`, `objTree`, `objRock`,
+  `objBush`, `objCactus` by name and prints each one's `instance_number` (a missing parent is
+  itself a finding - a check that measures nothing looks like "free");
+- it counts instances of those parents within **24 px** of the player, which is the build-cell
+  size, and prints each hit with its object name and distance.
+
+The **collision builtins** (`instance_position`, `place_meeting`, `position_meeting`,
+`place_free`) are the *right* answer and are all in `data.win` - but being in the build is
+necessary, not sufficient (`ini_open` was in the build and the loader still refused it), so they
+stay commented in F12 and get **one dedicated COMPILE** each, exactly like the bare
+`WaterCollision` call did. `data.win` also has `tile_get_index`, `tilemap_get_at_pixel` and
+`layer_tilemap_get_id` at count **0** - the tilemap accessors are *not* in this build, so a
+tile-map-based reading is off the table and the parent-object route is the one worth taking.
+
+Only once F12 says what a real build-cell contains does the host check get a second rule;
+implementing one before that risks refusing legal spots.
+
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
 alternate gate/wall with period 2, and #68..#80 have no name at all. Rows #1..#45 and
