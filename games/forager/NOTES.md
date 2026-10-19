@@ -298,6 +298,38 @@ exposes a **`Structure` enum** with symbolic members, and that index is what Pen
 actually syncs. `STRUCTURE_TABLE`/`INTENT_PLACE` should carry the index (name kept for logs).
 Fix not yet made.
 
+**F10 world probe (2026-10-20, 02:33): the structure was invisible because it was never a
+structure.** The mock's request landed on structure **#0**, which this database exposes as
+the build-menu **category header** `"для промышленности"` (`StructureGet(0,
+StructureData.Object)` = `objEmpty`, the placement-preview placeholder). `objEmpty` is not a
+`parStructure` descendant, so `instance_create_depth(..., objEmpty)` puts nothing real in the
+world, and the preview ghost is gone by the next probe. Two more facts fell out of the same
+dump:
+
+- The database has **92 rows**, not 64: a hard cap in `CoopSendStructureTable()` cut the
+  table at 64, so a peer only ever saw part of it. Rows #68..#80 have **empty names**
+  (objects `objGate`/`objFence`/`objVoidPortal`/`objLure`) and cannot be addressed on a
+  name-keyed wire at all.
+- **Depth is `-y`.** The probe found `objPlayer` at `691,656 depth -656` and a hand-built
+  `objFurnace` at `624,656 depth -656`, while the host had announced that same furnace as
+  `depth 0`: `OnStructureSpawn()` fires *before* the game y-sorts the instance. We were
+  creating remote structures at depth 0, i.e. on the wrong layer.
+
+Fix (mod `0.0.5-m2c`, protocol unchanged at 3): a new `CoopStructDepth(y)` returns `-floor(y)`
+and is used by both the applying host and the receiving client, so the mutation's `depth`
+field is now informational. `CoopSendStructureTable()` lost its 64 cap and skips unnamed
+rows. The mock's `choose_structure()` skips the `"для…"` headers and gained `--place-index`,
+so its automatic choice cannot land on a placeholder again.
+
+**Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look
+**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
+as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
+alternate gate/wall with period 2, and #68..#80 have no name at all. Rows #1..#45 and
+#81..#91 are correct and coherent (#1 `"печь"` = `objFurnace`, the object the game really
+used for a hand-built furnace), so the fence/gate family is a separate problem:
+`StructureData.Object` may not be the object index for those rows. Flagged for M2.x; it does
+not touch ordinary buildings.
+
 **A mod here cannot write a file.** Live COMPILE error, 2026-10-20:
 
 ```
