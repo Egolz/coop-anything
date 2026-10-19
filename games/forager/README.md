@@ -4,9 +4,9 @@
 |---|---|
 | Engine | **GameMaker Studio 2** (data file `data.win`) |
 | Versions tested | **Steam build 6160665** — modding toolchain **and** the M1 DirectTCP network layer run in-game; no co-op world sync yet |
-| Projects | PencilPal / PenPal (dead, see below); no maintained project found; **this is an open gap being worked** |
+| Projects | PencilPal / PenPal (dead, see below); **Forager Co-op** — a from-zero mod started here: https://github.com/Egolz/forager-coop |
 | QA level | none |
-| Last updated | 2026-10-19 |
+| Last updated | 2026-10-20 |
 
 ## Where things stand
 
@@ -90,8 +90,10 @@ the PencilPal source analysis, the API map above, and two run milestones:
   down **GameMaker's own TCP handshake and packet framing** (recorded in `NOTES.md`) — the
   piece any non-GML peer or relay must implement.
 
-No world sync yet: that is M2. The mod's code lives in its own repository (linked from here
-once it exists); this folder holds the write-up only.
+No world sync yet: that is M2. The mod's code lives in its own repository,
+**https://github.com/Egolz/forager-coop** (GPL-3.0); this folder holds the write-up only.
+That repository is also where the engine-level protocol notes and the mock peer
+(`tools/coop_mockpeer.py`) live.
 
 ## QA
 
@@ -100,7 +102,8 @@ asserted is the M1 **transport**: a scripted mock peer opened a DirectTCP sessio
 the running game and completed the GameMaker socket handshake, the mod's HELLO/WELCOME
 exchange and bidirectional ping/pong. That is a transport test, not a co-op test. Real co-op
 QA still needs two Forager clients driven by an in-mod bot (see `playbook/automated-qa.md`)
-— and whether Forager can run two instances on one PC is still `unknown`.
+— and Forager **cannot run two instances on one PC** (checked 2026-10-20), so that test needs
+a second Windows session/VM or a second machine.
 
 ## How to play
 
@@ -123,19 +126,19 @@ no code and no port forwarding.
 
 ## Next steps
 
-1. **Identity** — done: Steam build **6160665**, `Forager.exe` and `data.win` SHA-256 recorded
-   in `NOTES.md`. Still `unknown`: whether two Forager instances can run on one PC (needed for
-   automated two-client QA).
-2. **Understand** — read the full API docs (Events, Saving, Spawn/Structure/Zone
-   databases, Assets, Macros), dump the API surface of the live build, and map the save
-   file.
-3. **Choose the networking model** — start from PencilPal's protocol but make it
-   host-authoritative + sequenced, keep the GML sync layer, and move transport to
-   **Steam relay via Spacewar (app 480)** per `playbook/networking-steam-spacewar.md`
-   so no one forwards a port.
-4. **Scope an MVP** — 2 players, one shared world, sync only: player puppet, terrain
-   edits, resource pickups, dropped items, structure placement. Everything else later.
-5. **Scaffold the mod repo** — `fmConfig.json` + `Main.gml`, GPL-3.0 (the licence used by
-   the community example `Zamiell/FastCrafting`); other examples: `CainDev/Forager-Mods`,
-   `AlejandroAkbal/Forager-Cheater-Mod`. Design in [`DESIGN.md`](DESIGN.md).
-6. **Automate QA** — a scripted two-client test comparing agreed shared state.
+1. **Identity** — done. Steam build **6160665**, engine GameMaker Studio 2; `Forager.exe`,
+   `data.win` and `steam_api.dll` SHA-256 in `NOTES.md`.
+2. **Understand** — partial. The API surface M1/M2 relies on is mapped in `NOTES.md`; the
+   save file layout and the full event list are still to be dumped from the live build.
+3. **Choose the networking model** — done: **host-authoritative, sequenced mutations**
+   (the client sends intents, the host validates, applies and broadcasts the confirmed
+   mutation with a `seq`), behind a transport abstraction — DirectTCP now, **Steam relay via
+   Spacewar (app 480)** for release, per `playbook/networking-steam-spacewar.md`. See
+   `DESIGN.md`.
+4. **Scope an MVP** — done: 2 players, one shared world; sync the player puppet, terrain
+   edits, resource pickups, dropped items and structure placement. Everything else later.
+5. **Scaffold the mod repo** — done: **https://github.com/Egolz/forager-coop** (GPL-3.0).
+   M0 (a mod folder compiles and loads in the live build) and M1 (DirectTCP transport,
+   handshake, ping/pong, presence) are verified; the world sync is next.
+6. **Automate QA** — open, and now the hard part: Forager cannot run two instances on one
+   PC, so it needs a second Windows session/VM or a second machine, plus an in-mod bot.

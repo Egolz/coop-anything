@@ -4,6 +4,9 @@ Stage: **building.** M0 (toolchain) and the M1 transport layer are done and have
 against the live game (2026-10-19/20) — see `NOTES.md`. The world-sync design below is
 still a proposal being validated; API facts are sourced in `NOTES.md`.
 
+Code: **https://github.com/Egolz/forager-coop** (GPL-3.0). This folder is the write-up; the
+mod's `.gml` source, its protocol notes and the mock peer live in that repository.
+
 ## Goal
 
 Let 2 players share one Forager world over the internet, without port forwarding, without
@@ -108,8 +111,21 @@ a client can prove or disprove divergence.
   non-GML mock peer — network, drawing and the F8 status line confirmed by the owner, plus
   clean handling of a dropped peer. Still missing for a *release*: a real sprite puppet
   rather than a drawn marker (deferred to M2, where puppet state matters).
-- **M2 — host-authoritative world.** Terrain edits, resource pickups, dropped items,
-  structure placement via intents, with `seq` ordering.
+- **M2 — host-authoritative world.** A client sends intents; the host validates, applies and
+  broadcasts the confirmed mutation with a `seq`. Sliced so each piece is verifiable alone:
+  - **M2.0 plumbing** — `INTENT`/`MUTATION` packets (`seq` + `intentId`), a mutation table, and
+    a **self-test**: the mod creates a host server *and* opens a client socket to
+    `127.0.0.1` inside the same game instance, sends a scripted intent, then asserts the
+    confirmation and the resulting host state. Since Forager cannot run two instances, this is
+    how both roles get exercised in one process.
+  - **M2.1 structures** — place a structure as the client; the host spawns it and broadcasts
+    the confirmation; both sides agree (hooks `OnStructureSpawn`). First slice: the cleanest
+    event in the API.
+  - **M2.2 resources and loot** — harvest nodes, dropped items, pickups
+    (`OnResourceDestroy`, `OnItemDrop`, `OnItemGet`).
+  - **M2.3 terrain** — tile break/place. No event exists for it, so the host must detect tile
+    changes itself and turn them into mutations.
+  - **M2.4 item counts** — gold and resource deltas.
 - **M3 — resync.** Chunked snapshot on join + checksum-based divergence recovery.
 - **M4 — Steam relay.** Swap DirectTCP for the Spacewar relay backend; no port forwarding.
 - **M5 — automated QA.** Two scripted clients that perform fixed mutations and compare

@@ -225,7 +225,8 @@ What this pins down:
 ### M1 network layer (2026-10-19/20)
 
 The mod's M1 layer (HELLO/WELCOME handshake, PING/PONG, POS presence packets over DirectTCP
-6511) was run against a **non-GML** peer (a Python script, `local/tools/coop_mockpeer.py`)
+6511) was run against a **non-GML** peer (a Python script, now kept with the mod:
+https://github.com/Egolz/forager-coop → `tools/coop_mockpeer.py`)
 with the game hosting. The mod completed the GameMaker socket handshake, exchanged
 HELLO→WELCOME (the peer saw the game's real mod id/version `0.0.2-m1`, protocol 1), and
 ping/ponged both ways for ~25 s with no disconnects. The owner also confirmed the
