@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Engine | **GameMaker Studio 2** (data file `data.win`) |
-| Versions tested | not yet — identity of the live Steam build still being recorded (see `NOTES.md`) |
+| Versions tested | **Steam build 6160665** — modding toolchain verified (a scaffold mod compiles and loads in-game); no co-op code yet |
 | Projects | PencilPal / PenPal (dead, see below); no maintained project found; **this is an open gap being worked** |
 | QA level | none |
 | Last updated | 2026-10-19 |
@@ -80,8 +80,11 @@ is `unknown` — to be mapped in the Understand phase.*
 
 ## What we changed
 
-**Nothing yet — this is a research-stage write-up.** Contributions so far are the triage,
-the PencilPal source analysis and the API map above. No code has been built or run.
+**Research so far, plus one verified fact about the toolchain.** Contributions are the
+triage, the PencilPal source analysis, the API map above, and an M0 scaffold mod
+(`fmConfig.json` + `Main.gml`) that **compiles and loads in the live build 6160665** using
+only the game's own loader — no external tool, no `data.win` editing. The console output and
+the loader's mod-id rule are recorded in `NOTES.md`. No sync code has been written or run yet.
 
 ## QA
 
@@ -110,8 +113,9 @@ no code and no port forwarding.
 
 ## Next steps
 
-1. **Identity** — finish recording the live Steam build id / `Forager.exe` SHA-256 and
-   `data.win` hash, and confirm two instances can run on one PC (or find the flag/way).
+1. **Identity** — done: Steam build **6160665**, `Forager.exe` and `data.win` SHA-256 recorded
+   in `NOTES.md`. Still `unknown`: whether two Forager instances can run on one PC (needed for
+   automated two-client QA).
 2. **Understand** — read the full API docs (Events, Saving, Spawn/Structure/Zone
    databases, Assets, Macros), dump the API surface of the live build, and map the save
    file.

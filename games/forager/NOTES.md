@@ -16,7 +16,11 @@ Owner-specific state (their install, saves, license, backups) lives in
 | Engine | **GameMaker Studio 2** — confirmed by `data.win` in the install folder |
 | Modding | built-in modding API; mods are `.gml` script folders published on Steam Workshop |
 | OS tested | Windows (win32) |
-| Money | **Modding is not Unity.** No BepInEx / Harmony / Il2Cpp. See "How modding works". |
+| Steam build | `6160665` (Steam `StateFlags` 4; verified 2026-10-19) |
+| `Forager.exe` SHA-256 | `AD2B90F164320F646C340B0BE60AF966851DFDC74DCE366580F3DCD531853AE6` |
+| `data.win` SHA-256 | `0F5CCBFBBD80DD7EB5F1C4FDE676C4C1F8F1DC77E24BCCE9086D8EC2B38144E8` |
+| `steam_api.dll` SHA-256 | `AF17DF745250D1814EAA274FFF7B0FAEB43381E6762E026267E5859778477ABD` |
+| Caveat | **Modding is not Unity.** No BepInEx / Harmony / Il2Cpp. See "How modding works". |
 
 ## Observations (checked)
 
@@ -182,6 +186,42 @@ drones, vaults (a custom "Multiplayer Vault" structure), the partner puppet
 - `AlejandroAkbal/Forager-Cheater-Mod` — https://github.com/AlejandroAkbal/Forager-Cheater-Mod
 - `Forager Evolved` — the first official mod pack (Workshop item 2147146084).
 
+## Verified in-game (2026-10-19, M0)
+
+The scaffolding mod (`fmConfig.json` + `Main.gml`, a few globals and one `Trace` inside
+`#define Main`) **compiled and loaded** in the live Steam build 6160665 through the game's
+own loader — main menu → modding → enable → COMPILE. Console output (`t`), owner's SteamID
+redacted:
+
+```
+Forager Co-op 0.0.1-m0 loaded.
+Main method ran succesfully. Registering...
+Generated ID for mod 'Forager Co-op' is '<steamid64>ForagerCoop'
+Cleaning...
+Finished loading and initializing mods!
+Mods active: 1
+Importing currently active mods to loader...
+Scanning /mods/ to find inactive mods...
+Found an inactive mod: PencilPal
+```
+
+What this pins down:
+
+- **The toolchain works with no external tool.** No *Modding Tool*, no *GMEdit*, no
+  `data.win` editing: a folder dropped into the mods directory and COMPILE in the game is
+  enough to build and run GML. `Trace` prints to the `t` console.
+- **Mod id rule:** the loader derives the id as `author` + `name` with non-alphanumeric
+  characters removed — `<steamid64>` + `Forager Co-op` → `<steamid64>ForagerCoop`. So the
+  `author` field in `fmConfig.json` is not cosmetic (it must be the SteamID64).
+- **Mods directory** on Windows: `%LOCALAPPDATA%\Forager\mods\<Mod Name>\`. The enabled set
+  and order live in `%LOCALAPPDATA%\Forager\mods\settings.json`, rewritten by the game to
+  `{ "loadOrder": [ "mods/Forager Coop" ] }`.
+- **The loader also scans subscribed Steam Workshop content** for the app, not only the mods
+  folder — the log's "inactive mod PencilPal" is Workshop item `2843162754` sitting in the
+  Workshop cache. So a co-op mod can be delivered either locally or through the Workshop.
+- `Main method ran succesfully` precedes `Registering`, i.e. mod code really executes during
+  the compile/registration pass.
+
 ## Derived (our reading, not facts)
 
 - A Forager co-op mod is a **pure GML** problem. `UndertaleModTool` / `GMEdit` operate on
@@ -202,9 +242,10 @@ drones, vaults (a custom "Multiplayer Vault" structure), the partner puppet
 
 ## Unknowns
 
-- `unknown` — the current Steam build id of the live branch (owner copy's manifest said
-  6160665; see `local/owner-state.md`). Whether the live build differs from the 2022/23
-  one PencilPal targeted.
+- **Resolved 2026-10-19:** live Steam build is **6160665**, verified by Steam "Verify
+  integrity" (21 files, all valid) on the owner's machine. `Forager.exe` and `data.win`
+  SHA-256 are in the Identity table. Whether this equals the 2022/23 build PencilPal
+  targeted is still `unknown` (PencilPal's manifest only records API version 1.0.1).
 - `unknown` — whether PencilPal's source is available outside the compiled Workshop copy,
   and under what license. **We must not copy its code** without a license; study only.
 - **Resolved 2026-10-19:** modding API docs mirror found —
@@ -216,9 +257,11 @@ drones, vaults (a custom "Multiplayer Vault" structure), the partner puppet
 - `unknown` — whether `data.win` decompiles cleanly with UndertaleModTool for the live build.
 - `unknown` — whether Foragipelago's source is public (would be a second, independent
   example of Forager mods doing real socket I/O).
-- `unknown` — `data/directory.yaml` exact QA wording; **resolved:** Forager has no directory
-  entry yet, and `python` is **not installed** (only the Windows Store stub, exit 9009), so
-  `tools/build_directory.py` cannot run without installing Python (needs owner approval).
+- `unknown` — whether PencilPal's `Networking.gml` byte layout could be reused as-is, or
+  whether the sequenced-mutation design needs a different packet schema (probably the
+  latter).
+- **Resolved 2026-10-19:** Forager had no directory entry; one is added in this PR, and
+  Python 3.12 + PyYAML are installed so `tools/build_directory.py` runs.
 
 ## Sources index
 
@@ -240,3 +283,6 @@ drones, vaults (a custom "Multiplayer Vault" structure), the partner puppet
   the owner to restore the legit Steam copy first (details in `local/owner-state.md`).
 - 2026-10-19: Dismissed PencilPal-as-base and GMTogether; kept PencilPal's *source* as a
   reference to study (no code copied).
+- 2026-10-19: **M0 passed** — the scaffold mod compiles and loads in the live build using the
+  game's own loader, so no external modding tool is needed to build co-op. Next is M1
+  (network layer) per `DESIGN.md`.
