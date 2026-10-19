@@ -508,6 +508,34 @@ using only calls already proven live. The intent handler refuses `"that spot is 
 occupied"` after the water check. The mock treats an occupied refusal like a water one and steps
 to the next candidate, so a run shows both obstacles being walked around.
 
+**Verified live 2026-10-20, all four cases in one afternoon.** The mock was given a second round
+that aims at the exact cell it just filled, so the occupied rule is answered by the host's own
+new structure and not by luck:
+
+```
+[03:40:11] accepted: 'MUTATION_PLACE' at 665,578 (seq 1) - the spot we asked for was free
+[03:40:11]    round 2: will ask for the occupied cell (665,578)
+[03:40:14] -> INTENT_PLACE 'печь' at 665,578 (round 2, spot 1/1)
+[03:40:14] <- INTENT_REJECTED #33770: 'that spot is already occupied'
+```
+
+and the owner standing next to a tree, where the first five candidate cells were all occupied:
+
+```
+[03:41:14] -> INTENT_PLACE 'печь' at 664,656 (round 1, spot 1/25)
+[03:41:14] <- INTENT_REJECTED #64191: 'that spot is already occupied'
+[03:41:14] -> INTENT_PLACE 'печь' at 680,656 (round 1, spot 2/25)
+[03:41:14] <- INTENT_REJECTED #57968: 'that spot is already occupied'
+... spots 3, 4, 5 the same ...
+```
+
+So the rule holds in all four states: **free -> accepted, water -> refused, occupied -> refused,
+and a cell filled one second earlier -> refused**. The second run ended with every candidate cell
+refused ("the ring is all water or occupied") because the owner was on a small island and the
+ring reaches 320 px - a correct outcome, not a failure: the host refused everything illegal and
+the mock had nowhere legal to ask. Worth noting for future tests: the candidate ring should
+follow the *owner's* island, or the mock should ask at a cell it knows is free.
+
 Only once F12 says what a real build-cell contains does the host check get a second rule;
 implementing one before that risks refusing legal spots.
 
