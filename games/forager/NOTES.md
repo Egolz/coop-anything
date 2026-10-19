@@ -329,10 +329,10 @@ instance itself as `seq=2`, and the next F10 probe found it as a real instance:
 game's own instance, and the table now carries **79 addressable** entries (92 rows minus the
 13 unnamed ones).
 
-**One behavioural gap found by the same test:** the mock's guessed spot was on **water**, and
-the furnace was created anyway. A client's intent is validated for *who* asked (the name, the
-room, the 448 px range) but **not for whether the spot is legal** - the host does not ask the
-game's own placement rules. A player could not have built there.
+**One behavioural gap found by the same test, since closed:** the mock's guessed spot was on
+**water**, and the furnace was created anyway. A client's intent was validated for *who* asked
+(the name, the room, the 448 px range) but **not for whether the spot is legal**. `0.0.7-m2e`
+adds the game's own check - see the `WaterCollision` finding below.
 
 **`ScriptCall` takes exactly one argument (live COMPILE, 2026-10-20):**
 
@@ -370,6 +370,34 @@ part of the probe) rather than assumed. The one control that did run,
 `ScriptCall(ScriptWrap("GetLandsOwned"))`, returned `-1` - consistent with "no lands owned", but
 also with "the name resolved inside our mod and hit nothing", so it proves the *call path* works
 and not that first-party scripts are reachable.
+
+**Settled - and the answer was "just call it" (live 2026-10-20, `0.0.7-m2e`):** the game is
+**not registered as a mod at all**. `ModFind` returned `-1` and `ModIsOnline` `0` for every id
+tried (`Forager`, `ForagerModdingAPI`, `ModdingSample`, `forager`, `Forager Coop`), so the
+registry only ever holds real mods and `ModFunctionGet("Forager", ...)` could never have worked.
+But the functions the docs list under *General Forager Behavior* are **directly callable** - a
+bare `WaterCollision(x, y)` compiles and runs:
+
+```
+WaterCollision(703,630) = 0     (the player stood on land)
+left 0   right 1   up 1   down 0   far +512 right 1
+HasSkill(0) = 0
+```
+
+So `0` = land, non-zero = water, and no wrapper is involved. The F11 probe, the `ScriptWrap` /
+`ModFunctionGet` detour and both around it were unnecessary - the docs' plain list was the whole
+story. **Lesson for the next agent:** try the plain call first; reach for `ScriptWrap` /
+`ScriptCall` only for a *mod's own* scripts, and remember `ScriptCall` takes the wrapper alone.
+
+The host now refuses an intent whose spot is water, and the round trip is verified:
+
+```
+-> INTENT_PLACE 'печь' at 859,641 (room 8, #2268); our puppet is at 635,649
+<- INTENT_REJECTED #2268: 'that spot is on water'
+```
+
+The client rolls its optimistic placement back on `INTENT_REJECTED` (it had already drawn the
+furnace optimistically), so both ends end up agreeing with no structure on the water.
 
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
