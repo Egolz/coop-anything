@@ -273,19 +273,67 @@ and a mock peer completes GameMaker's socket handshake, `HELLO`/`WELCOME` (proto
 `Structure.Count` and `StructureGet(id, StructureData.Name/Object)` do work at runtime in
 build 6160665 (see the caveat below about what the names look like).
 
-**Still to see live:** the placement round trip itself (`INTENT_PLACE` ->
-`MUTATION_PLACE`). The peer's own half is now covered offline by `tools/mock_e2e.ps1`
-(mock server <-> mock client), which is also how two bugs in the peer were found: its
-server never sent the GameMaker banner (so a real GameMaker client waited forever - the
-"client joins the mock" test could never have worked), and the place target was computed
-from a tuple. Lesson for this hub: an offline two-peer test pays for itself before the
-owner's game is involved.
+**The round trip is verified live (2026-10-20, 01:58:39).** The mock sent
+`INTENT_PLACE 'Лесопилка' at 809,651 (room 8)` and the host answered
+`MUTATION_PLACE seq=1 intent=#15683 room=8 depth 0` on the console, with no crash and a live
+socket. What is **not** verified - and is the open bug - is that the host *applied* it: the
+player sees nothing appear in the world. The host's own apply path is therefore wrong
+somewhere (`CoopCreateStructure` in `Net.gml`), and the next step is to probe it rather than
+guess: F10 dumps the game's own structure instances next to ours (see the diagnostics note
+below).
 
 **Structure names look localized.** The 64 names the host sent were not ASCII on a Russian
 install (the console mangles them), which would make name-keyed sync language-dependent -
 the `STRUCTURE_TABLE` divergence check exists for exactly that. The peer now dumps the
 table to UTF-8 JSON (`%TEMP%\coop_structure_table.json`) so this can be settled from the
 file rather than the console. `unknown` until that file is read.
+
+**Settled: the names are display strings, and the key has to change.** The dumped
+`%TEMP%\coop_structure_table.json` holds 64 **Russian** strings, several with an embedded
+newline (`"швейная\nмастерская"`, `"для\nпромышленности"`), i.e. wrapped UI labels, not
+stable ids. The mock's English `PREFERRED_STRUCTURES` silently fell back to entry 0 for the
+same reason. The right key is visible in the API docs' own event example:
+`#define OnStructureSpawn(id, structure)` + `if (structure == Structure.Forge)` - the API
+exposes a **`Structure` enum** with symbolic members, and that index is what PencilPal
+actually syncs. `STRUCTURE_TABLE`/`INTENT_PLACE` should carry the index (name kept for logs).
+Fix not yet made.
+
+**A mod here cannot write a file.** Live COMPILE error, 2026-10-20:
+
+```
+Mod failed to unit! Forager Coop/Net.gml[L453,c1] `ini_open` is not function or script
+```
+
+`ini_open`, `ini_write_string`, `ini_write_real` and `ini_close` are all *in* `data.win` -
+the game writes its own `secretSettings.ini` with them - so "the name is in the build" is
+necessary but **not sufficient**: the loader resolves a mod's calls against its own function
+table. `file_text_*`, `buffer_save`, `show_debug_message` and `working_directory` are absent
+from the build entirely. `tools/check_gml.py` now has a `LOADER_BLOCKED` list for this class
+(it is exactly the false "0 problems" that shipped the broken build). Consequence: a long
+dump cannot become a file - the mod forwards it to the peer over the protocol
+(`DEBUG_LINE`, packet 12, protocol 3) and `tools/coop_mockpeer.py` writes
+`%TEMP%\coop_debug.txt`. Offline `tools/mock_e2e.ps1` covers that path too.
+
+**More from the official docs mirror** (API 1.0.1, fetched 2026-10-20):
+
+- `parStructure [parObject]` is the parent of **every** craftable structure, "both from the
+  build menu and from placing objects from the inventory (like decorative items)".
+- Structure **crafting runs on the system step** (once per 20 frames, with pathfinding and
+  culling) - so a structure is not necessarily a thing the game builds on the frame it is
+  placed.
+- Culling deactivates off-screen instances; `antiCull = true` in a Create event prevents it,
+  and `TrueInstance*` is the documented way to *reach* deactivated instances. Our probe uses
+  `TrueInstance*`, so an instance that exists but is culled/deactivated (invisible to the
+  player, present to the mod) is exactly what it can distinguish - one of the live theories
+  for the invisible structure.
+- Mods are expected to create their own instances with `ModObjectSpawn(x, y, depth)`;
+  "you cannot create objects in Forager modding". `instance_create_depth` with a *native*
+  object is still used in the docs' own examples (and by PencilPal), so creating a native
+  structure object is legitimate - the question is which object and with what initial state.
+- The API docs **do not document** `StructureGet` / `StructureCreate` / `StructureEdit` /
+  `StructureAddItem`: the `Structure Database` page only links a tutorial video
+  (YouTube `DMn9r4wmJFo`). For structure internals we are back to PencilPal's source plus
+  live probing.
 
 The notes below are what was learned while writing it (from the modding API docs,
 PencilPal's source and the live build's symbol table).
@@ -362,6 +410,9 @@ Several facts fall out of that, all worth knowing before writing any Forager mod
   that is now the mod's pre-deploy check (`tools/check_gml.py`, which also flags brackets,
   duplicate `var`s in one block, wrong macro arity and the value-macro trap). A mod compile
   itself reports only the *first* error, so an offline pass saves a round trip each time.
+  **Caveat, learned later the same day:** presence in `data.win` is necessary but not
+  sufficient — the string search says yes to `ini_open`, and the loader still refuses it
+  (see the file-writing note below and `LOADER_BLOCKED` in the checker).
 - **`try`/`catch` does not compile.** The loader turns mod GML into its own AST and cannot
   walk a `try_catch` node, so a `try` anywhere takes the game down at COMPILE time - and
   again on every launch, because mods are recompiled. There is no on-screen message and the
