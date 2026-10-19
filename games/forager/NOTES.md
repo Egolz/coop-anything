@@ -479,6 +479,35 @@ stay commented in F12 and get **one dedicated COMPILE** each, exactly like the b
 `layer_tilemap_get_id` at count **0** - the tilemap accessors are *not* in this build, so a
 tile-map-based reading is off the table and the parent-object route is the one worth taking.
 
+**F12's second live run settled the rule's shape and the rule is now implemented (`0.0.10-m2h`).**
+The parent chains, walked with `object_get_parent` (already proven live in F10), are the whole
+story:
+
+```
+chain objFurnace   -> objFurnace  parStructure  parObject  parSolid
+chain objTree      -> objTree     parNatural    parObject  parSolid
+chain objRock      -> objRock     parNatural    parObject  parSolid
+chain parStructure -> parStructure parObject     parSolid
+```
+
+**Every tree, rock and built structure descends from `parSolid`** - a furnace through
+`parStructure`, a tree or rock through `parNatural`, all meeting at `parSolid`. So a single rule
+suffices; a rule against `parStructure` alone would have missed trees and rocks entirely, and
+would also have looked broken, because `parStructure` reports **0 instances of its own** (the
+game keeps a furnace under `objFurnace`). The same run confirmed the reading on a real object:
+
+```
+parent 'parStructure' #108 instances 1        (the furnace that was just built)
+parent 'parSolid'     #271 instances 20       (19 world solids + the furnace)
+  near objFurnace at 720,624 d 13 (parent parSolid)
+```
+
+`CoopSolidNear(x, y)` in `Net.gml` counts `parSolid` instances within `global.coopSolidRadius`
+(24 px - the live reading put a tree at 11 px and a rock at 17 px, so 24 px is the build-cell),
+using only calls already proven live. The intent handler refuses `"that spot is already
+occupied"` after the water check. The mock treats an occupied refusal like a water one and steps
+to the next candidate, so a run shows both obstacles being walked around.
+
 Only once F12 says what a real build-cell contains does the host check get a second rule;
 implementing one before that risks refusing legal spots.
 
