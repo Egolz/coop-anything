@@ -267,9 +267,28 @@ can be inspected with the in-game status dump (F8 → Trace) without a second Fo
 
 ### M2.1 host-authoritative structure placement (2026-10-20)
 
-The first world-sync slice is written and deployed but **not yet run in the live build**; the
-notes below are what was learned while writing it (from the modding API docs, PencilPal's
-source and the live build's symbol table), not measurements.
+**Verified in the live build (2026-10-20):** the mod compiles and loads, F5 hosts on 6511,
+and a mock peer completes GameMaker's socket handshake, `HELLO`/`WELCOME` (protocol 2),
+`PING`/`PONG`, `POS` and the host's `STRUCTURE_TABLE` - **64 structures**, so
+`Structure.Count` and `StructureGet(id, StructureData.Name/Object)` do work at runtime in
+build 6160665 (see the caveat below about what the names look like).
+
+**Still to see live:** the placement round trip itself (`INTENT_PLACE` ->
+`MUTATION_PLACE`). The peer's own half is now covered offline by `tools/mock_e2e.ps1`
+(mock server <-> mock client), which is also how two bugs in the peer were found: its
+server never sent the GameMaker banner (so a real GameMaker client waited forever - the
+"client joins the mock" test could never have worked), and the place target was computed
+from a tuple. Lesson for this hub: an offline two-peer test pays for itself before the
+owner's game is involved.
+
+**Structure names look localized.** The 64 names the host sent were not ASCII on a Russian
+install (the console mangles them), which would make name-keyed sync language-dependent -
+the `STRUCTURE_TABLE` divergence check exists for exactly that. The peer now dumps the
+table to UTF-8 JSON (`%TEMP%\coop_structure_table.json`) so this can be settled from the
+file rather than the console. `unknown` until that file is read.
+
+The notes below are what was learned while writing it (from the modding API docs,
+PencilPal's source and the live build's symbol table).
 
 **The structure database is readable at runtime.** For an id in `0 .. Structure.Count-1`:
 
