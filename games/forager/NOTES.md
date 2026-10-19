@@ -556,6 +556,23 @@ that misses a rare case - so F12 now dumps its chain and the next run adds it on
 is the living-things parent. The mock also no longer offers the player's own cell as a candidate,
 which is the model the real game uses.
 
+**Verified live after the fix (`0.0.11-m2i`), the full sequence in one run:**
+
+```
+[03:51:21] -> INTENT_PLACE 'печь' at 707,666 (round 1, spot 13/168)
+[03:51:21] <- INTENT_REJECTED #35835: 'that spot is already occupied'
+[03:51:21] -> INTENT_PLACE 'печь' at 723,602 (round 1, spot 14/168)
+[03:51:21] <- MUTATION seq=1 intent=#8625 room=8 'печь' at 723,602 depth -602
+[03:51:21]    accepted: ... the spot we asked for ((723, 602)) was free
+[03:51:21]    round 2: will ask for the occupied cell (723,602)
+[03:51:24] -> INTENT_PLACE 'печь' at 723,602 (round 2, spot 1/1)
+[03:51:24] <- INTENT_REJECTED #55420: 'that spot is already occupied'
+```
+
+The owner confirmed the visual half too - *"the mock put the furnace on a free spot"*, on the
+ground and **not** under the host. The spiral's first candidate is now `(-16,-16)`, so the cell
+the player stands on is never offered, matching the real game.
+
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned**
 
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
