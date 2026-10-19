@@ -321,8 +321,23 @@ field is now informational. `CoopSendStructureTable()` lost its 64 cap and skips
 rows. The mock's `choose_structure()` skips the `"для…"` headers and gained `--place-index`,
 so its automatic choice cannot land on a placeholder again.
 
-**Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look
-**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
+**The round trip is verified end to end (2026-10-20, 02:46).** The mock asked for `"печь"`
+at 800,672, the host answered `MUTATION seq=1 … depth -672` and then re-announced the same
+instance itself as `seq=2`, and the next F10 probe found it as a real instance:
+`par objFurnace 800,672 depth -672 image 0 visible 1`, counted under both `#1 'печь'` and
+`#81 'ядерная печь'` (same object, two database rows). `depth = -y` is confirmed against the
+game's own instance, and the table now carries **79 addressable** entries (92 rows minus the
+13 unnamed ones).
+
+**One behavioural gap found by the same test:** the mock's guessed spot was on **water**, and
+the furnace was created anyway. A client's intent is validated for *who* asked (the name, the
+room, the 448 px range) but **not for whether the spot is legal** - the host does not ask the
+game's own placement rules. A player could not have built there. Structure validity is
+unmapped (`unknown`): it is likely a build-mode/tile check in the game rather than a property
+of `parStructure`, and the API docs do not describe one. Tracked for M2.x; a first cheap
+guard is to refuse an intent whose spot the host has no walkable tile for.
+
+**Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
 alternate gate/wall with period 2, and #68..#80 have no name at all. Rows #1..#45 and
 #81..#91 are correct and coherent (#1 `"печь"` = `objFurnace`, the object the game really
