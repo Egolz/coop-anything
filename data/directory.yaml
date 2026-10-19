@@ -6558,3 +6558,37 @@
   - https://www.nexusmods.com/farcry2/mods/368
   - https://steamcommunity.com/app/19900/discussions/0/864973123475897875
   checked: '2026-10-19'
+- game: Forager
+  year: 2019
+  engine: GameMaker Studio 2
+  project: PencilPal
+  url: https://steamcommunity.com/sharedfiles/filedetails/?id=2843162754
+  other_urls:
+  - https://playco-opgame.com/multiplayer-mod/forager-multiplayer-mod/
+  kind: mod
+  status: abandoned
+  coop_scope:
+    players_visible: 'yes'
+    story: 'no'
+    enemies: partial
+    world_state: partial
+    items: shared
+  players: '2'
+  networking: direct-ip
+  open_source: 'no'
+  last_activity: '2023-04'
+  qa: community-reports
+  notes: >-
+    Official multiplayer was announced, beta-tested and cancelled in 2021 (too buggy; refunds offered). PencilPal was
+    the community replacement: host/join by typed IP over raw TCP port 6511 (no relay; players used Hamachi). Two
+    players share one world, syncing terrain, resources, dropped items, object health, chests, industrial structures,
+    NPC quests, slimes, drones, a shared vault, a player puppet, gold, chat, emojis and a PvP mode. It is now removed
+    from the Workshop ("violates Steam Community & Content Guidelines", "incompatible with Forager"), last updated
+    2023-04-08, and players report constant crashes into late 2025 ("unplayable"). Predecessor PenPal only rendered
+    the friend's sprite. A from-zero co-op mod is being worked on, see games/forager.
+  sources:
+  - https://steamcommunity.com/sharedfiles/filedetails/?id=2843162754
+  - https://playco-opgame.com/multiplayer-mod/forager-multiplayer-mod/
+  - https://www.rockpapershotgun.com/forager-cancels-multiplayer
+  - https://yal.cc/forager-retrospect/
+  checked: '2026-10-19'
