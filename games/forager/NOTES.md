@@ -249,6 +249,11 @@ Consequences:
   whether Forager's API exposes them is `unknown` — the mod does not need them, since it
   talks to other GameMaker peers.
 
+**Two instances on one PC: not possible** (owner-checked 2026-10-20 — launching Forager a
+second time while it runs is refused). So automated two-client QA needs a second Windows
+session/VM, or a second machine. Meanwhile the transport half can be tested with the
+non-GML mock peer above.
+
 **Terrain note for QA:** the mock peer also sends POS packets, so the game side of presence
 can be inspected with the in-game status dump (F8 → Trace) without a second Forager copy.
 
@@ -280,8 +285,9 @@ can be inspected with the in-game status dump (F8 → Trace) without a second Fo
   and under what license. **We must not copy its code** without a license; study only.
 - **Resolved 2026-10-19:** modding API docs mirror found —
   https://topheranselmo.com/forager-modding-docs/ (API version 1.0.1).
-- `unknown` — whether Forager can run **two instances on one PC** (needed for automated
-  two-client QA; may need `-nomutex` or a second Windows user).
+- **Resolved 2026-10-20:** Forager **cannot** run two instances on one PC — a second launch
+  while the game is running is refused. Two-client QA therefore needs a second Windows
+  session/VM or a second machine.
 - `unknown` — whether the modding API can load a native/GML extension
   (needed for Steamworks.gml inside a mod).
 - `unknown` — whether `data.win` decompiles cleanly with UndertaleModTool for the live build.

@@ -117,12 +117,17 @@ a client can prove or disprove divergence.
 ## Testing
 
 Per `playbook/automated-qa.md`: two real clients, driven by an in-mod bot (not fake input),
-asserting shared state. First we must answer: **can Forager run two instances on one PC?**
-If not, QA needs two Windows sessions/VMs.
+asserting shared state.
+
+**Answered 2026-10-20: Forager cannot run two instances on one PC** (a second launch while
+it runs is refused). So a full two-client test needs a second Windows session/VM, or a
+second machine. Until then: the transport is covered by the non-GML mock peer, and the
+in-mod bot can at least drive one side and assert the packets/state it gets.
 
 ## Open risks
 
-- Two instances on one PC may be impossible (`unknown`).
+- ~~Two instances on one PC may be impossible~~ — **confirmed impossible** 2026-10-20; see
+  Testing.
 - Whether a Forager mod can load the Galaxy/Steamworks GML library for the relay backend
   (`unknown`).
 - The live build's API may differ from the 1.0.1 the docs describe.
