@@ -222,6 +222,36 @@ What this pins down:
 - `Main method ran succesfully` precedes `Registering`, i.e. mod code really executes during
   the compile/registration pass.
 
+### M1 network layer (2026-10-19/20)
+
+The mod's M1 layer (HELLO/WELCOME handshake, PING/PONG, POS presence packets over DirectTCP
+6511) was run against a **non-GML** peer (a Python script, `local/tools/coop_mockpeer.py`)
+with the game hosting. The mod completed the GameMaker socket handshake, exchanged
+HELLO→WELCOME (the peer saw the game's real mod id/version `0.0.2-m1`, protocol 1), and
+ping/ponged both ways for ~25 s with no disconnects.
+
+**Forager's mod sockets use GameMaker's own TCP protocol** — the part that bites anyone
+writing a peer in another language:
+
+- on connect the server sends the ASCII banner `GM:Studio-Connect\0` (18 bytes);
+- the client answers with three little-endian u32s: `0xCAFEBABE`, `0xDEADB00B`, `16`;
+- the server replies `0xDEAFBEAD`, `0xF00DBEEB`, `12`;
+- every packet after that is framed `u32 0xDEADC0DE`, `u32 12`, `u32 payloadLen`, payload.
+
+Constants confirmed against YoYoGames' own implementation
+(`GameMaker-HTML5/scripts/functions/Function_Networking.js`) and verified live by dumping
+the running game's bytes (the banner, then the step-3 signatures after our 16-byte reply).
+Consequences:
+
+- A relay/server written in another language must implement this handshake **and** the
+  framing; a GML↔GML path (e.g. the Steam relay) gets it for free.
+- GML also has `network_create_server_raw` / `network_connect_raw` for the unframed variant;
+  whether Forager's API exposes them is `unknown` — the mod does not need them, since it
+  talks to other GameMaker peers.
+
+**Terrain note for QA:** the mock peer also sends POS packets, so the game side of presence
+can be inspected with the in-game status dump (F8 → Trace) without a second Forager copy.
+
 ## Derived (our reading, not facts)
 
 - A Forager co-op mod is a **pure GML** problem. `UndertaleModTool` / `GMEdit` operate on

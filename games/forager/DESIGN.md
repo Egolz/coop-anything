@@ -1,7 +1,8 @@
 # Forager co-op mod — design (working document)
 
-Stage: **design only.** No code has been built or run. Everything here is a proposal to
-be validated against the live game; API facts are sourced in `NOTES.md`.
+Stage: **building.** M0 (toolchain) and the M1 transport layer are done and have been run
+against the live game (2026-10-19/20) — see `NOTES.md`. The world-sync design below is
+still a proposal being validated; API facts are sourced in `NOTES.md`.
 
 ## Goal
 
@@ -100,10 +101,12 @@ a client can prove or disprove divergence.
 
 ## Milestones
 
-- **M0 — it loads.** Mod folder compiles in-game and `Trace`s a version string. Needs a
-  restored legit copy. Proves the toolchain.
-- **M1 — presence over LAN.** Two clients, DirectTCP, puppets visible and moving. Clean
-  connect/disconnect (no crash if the peer drops).
+- **M0 — it loads.** ✅ 2026-10-19: the mod folder compiles in-game and `Trace`s a version
+  string. Proves the toolchain.
+- **M1 — presence over LAN.** 🟡 transport done: DirectTCP host/join, GM socket handshake,
+  HELLO/WELCOME, ping/pong and POS packets verified against a non-GML mock peer
+  (2026-10-20). Still to do: two real clients, the puppet instance drawn from POS, clean
+  drop handling.
 - **M2 — host-authoritative world.** Terrain edits, resource pickups, dropped items,
   structure placement via intents, with `seq` ordering.
 - **M3 — resync.** Chunked snapshot on join + checksum-based divergence recovery.

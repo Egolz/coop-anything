@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Engine | **GameMaker Studio 2** (data file `data.win`) |
-| Versions tested | **Steam build 6160665** — modding toolchain verified (a scaffold mod compiles and loads in-game); no co-op code yet |
+| Versions tested | **Steam build 6160665** — modding toolchain **and** the M1 DirectTCP network layer run in-game; no co-op world sync yet |
 | Projects | PencilPal / PenPal (dead, see below); no maintained project found; **this is an open gap being worked** |
 | QA level | none |
 | Last updated | 2026-10-19 |
@@ -80,17 +80,27 @@ is `unknown` — to be mapped in the Understand phase.*
 
 ## What we changed
 
-**Research so far, plus one verified fact about the toolchain.** Contributions are the
-triage, the PencilPal source analysis, the API map above, and an M0 scaffold mod
-(`fmConfig.json` + `Main.gml`) that **compiles and loads in the live build 6160665** using
-only the game's own loader — no external tool, no `data.win` editing. The console output and
-the loader's mod-id rule are recorded in `NOTES.md`. No sync code has been written or run yet.
+**A working M1 network layer, verified in the live build.** Contributions are the triage,
+the PencilPal source analysis, the API map above, and two run milestones:
+
+- **M0** — a scaffold mod (`fmConfig.json` + `Main.gml`) compiles and loads in the live build
+  6160665 using only the game's own loader: no external tool, no `data.win` editing.
+- **M1** — DirectTCP host/join (F5/F6), a version-checked HELLO/WELCOME handshake, ping/pong
+  keepalive and player-presence packets. Verified against a non-GML peer, which also pinned
+  down **GameMaker's own TCP handshake and packet framing** (recorded in `NOTES.md`) — the
+  piece any non-GML peer or relay must implement.
+
+No world sync yet: that is M2. The mod's code lives in its own repository (linked from here
+once it exists); this folder holds the write-up only.
 
 ## QA
 
-None. There is no test harness yet. Per `playbook/automated-qa.md` any "works" claim will
-need two real Forager clients driven and compared — and Forager's ability to run two
-instances on one PC is still `unknown`.
+QA level: **none** for co-op — nothing playable is synced yet. The one thing actually
+asserted is the M1 **transport**: a scripted mock peer opened a DirectTCP session against
+the running game and completed the GameMaker socket handshake, the mod's HELLO/WELCOME
+exchange and bidirectional ping/pong. That is a transport test, not a co-op test. Real co-op
+QA still needs two Forager clients driven by an in-mod bot (see `playbook/automated-qa.md`)
+— and whether Forager can run two instances on one PC is still `unknown`.
 
 ## How to play
 
