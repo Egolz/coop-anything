@@ -332,10 +332,23 @@ game's own instance, and the table now carries **79 addressable** entries (92 ro
 **One behavioural gap found by the same test:** the mock's guessed spot was on **water**, and
 the furnace was created anyway. A client's intent is validated for *who* asked (the name, the
 room, the 448 px range) but **not for whether the spot is legal** - the host does not ask the
-game's own placement rules. A player could not have built there. Structure validity is
-unmapped (`unknown`): it is likely a build-mode/tile check in the game rather than a property
-of `parStructure`, and the API docs do not describe one. Tracked for M2.x; a first cheap
-guard is to refuse an intent whose spot the host has no walkable tile for.
+game's own placement rules. A player could not have built there.
+
+**`ScriptCall` takes exactly one argument (live COMPILE, 2026-10-20):**
+
+```
+Mod failed to unit! Forager Coop/Net.gml[L536,c16] `ScriptCall` takes 1 argument, got 3.
+```
+
+The docs read as if a wrapper is only *described* by `[mod, methodName]`, but the arity error
+is the ground truth: `ScriptCall(wrapper)` passes the wrapper and nothing else. So
+`ScriptWrap` + `ScriptCall` reaches a **zero-argument** first-party script only, and
+`WaterCollision(x, y)` - which needs x and y - is not reachable through that path. `F11` is
+therefore a read-only probe (`0.0.6-m2d`) that reports `typeof`/`array_length` of the wrapper,
+what `ModFunctionGet("Forager", "WaterCollision")` returns, and a `GetLandsOwned` control call,
+instead of guessing at an argument-passing spelling. How (or whether) arguments can be passed to
+a first-party API script is `unknown`; the API symbol table also holds `ModCall` and `InsideMod`,
+untried.
 
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
