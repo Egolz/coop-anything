@@ -120,7 +120,14 @@ a client can prove or disprove divergence.
     how both roles get exercised in one process.
   - **M2.1 structures** — place a structure as the client; the host spawns it and broadcasts
     the confirmation; both sides agree (hooks `OnStructureSpawn`). First slice: the cleanest
-    event in the API.
+    event in the API. **Code written 2026-10-20** (protocol 2, packets 8–11: `INTENT_PLACE`,
+    `MUTATION_PLACE`, `INTENT_REJECTED`, `STRUCTURE_TABLE`); the mock peer speaks them and its
+    codec passes an offline self-test, but the two roles have **not** yet been exercised in
+    the live build — the first live run is pending, so treat M2.1 as unverified.
+    Decisions taken here: a structure travels by **name** (`"forge"`), not object index
+    (build-independent, greppable in a log); the host validates room, structure existence and
+    a 448 px distance from the asker's last reported position, then creates the structure
+    itself; the client places optimistically and rolls back on `INTENT_REJECTED`.
   - **M2.2 resources and loot** — harvest nodes, dropped items, pickups
     (`OnResourceDestroy`, `OnItemDrop`, `OnItemGet`).
   - **M2.3 terrain** — tile break/place. No event exists for it, so the host must detect tile

@@ -265,6 +265,46 @@ non-GML mock peer above.
 **Terrain note for QA:** the mock peer also sends POS packets, so the game side of presence
 can be inspected with the in-game status dump (F8 → Trace) without a second Forager copy.
 
+### M2.1 host-authoritative structure placement (2026-10-20)
+
+The first world-sync slice is written and deployed but **not yet run in the live build**; the
+notes below are what was learned while writing it (from the modding API docs, PencilPal's
+source and the live build's symbol table), not measurements.
+
+**The structure database is readable at runtime.** For an id in `0 .. Structure.Count-1`:
+
+- `StructureGet(id, StructureData.Name)` → the structure's key, **lowercase** (`"forge"`,
+  matching what PencilPal compares: `"multiplayer vault"`).
+- `StructureGet(id, StructureData.Object)` → the object index it is built from (`objForge`).
+
+`StructureData` / `StructureType` are **compile-time enums**, so they do not appear in
+`data.win`'s symbol table even though the code above works — an absent name there is not
+proof of an absent feature. The database is not guaranteed to be up when a mod's `Main`
+runs, so the mod caches it lazily (rebuild if the cache is empty) instead of once at load.
+
+**`#define` macros here behave like functions, not like textual includes.** Evidence:
+PencilPal's `EaseOutBack` is used mid-expression (`var _y = EaseOutBack(_t, a, b, d);`) and
+its body ends in `return` — as a text include that would be a syntax error, and the early
+`return` would abort the caller's script (their phone UI would never draw). This matters
+because it means (a) `return` in a macro returns from the macro, (b) macros may be nested
+freely, and (c) re-declaring the same `var` name in different macros is harmless. PencilPal
+also shows the game's compiler tolerates the same `var` name twice in *different blocks* of
+one script (`Battle`, `SyncResources`), which is why 20 `var _packet` declarations coexist in
+`Networking.gml`.
+
+**Structures travel by name, not object index.** An object index is build-specific and
+unreadable in a log; the name is neither. A build that renumbers structures keeps working,
+and a log line says `place 'forge'` instead of `place 214`.
+
+**Validation is the host's job.** The host refuses an intent unless the structure exists, the
+client's reported room equals the host's room, and the target is within 448 px of the
+client's *last reported position* (a sanity check against a peer that teleports builds
+across the map — not anti-cheat). A refusal is answered with the reason, which the client
+`Trace`s, and the client rolls its optimistic placement back.
+
+**Protocol 2** — the packet set changed, so `coopProtocol` and the mock peer went 1 → 2; a
+v1 peer is now rejected at handshake instead of silently ignoring the new packet ids.
+
 ## Derived (our reading, not facts)
 
 - A Forager co-op mod is a **pure GML** problem. `UndertaleModTool` / `GMEdit` operate on

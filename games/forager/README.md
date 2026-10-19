@@ -89,8 +89,11 @@ the PencilPal source analysis, the API map above, and two run milestones:
   keepalive and player-presence packets. Verified against a non-GML peer, which also pinned
   down **GameMaker's own TCP handshake and packet framing** (recorded in `NOTES.md`) — the
   piece any non-GML peer or relay must implement.
+- **M2.1** — host-authoritative *structure placement*: a client's placement becomes an intent,
+  the host validates and creates the structure itself, then broadcasts a sequenced mutation.
+  Code written and deployed; **awaiting its first in-game run**, so it is not yet evidence.
 
-No world sync yet: that is M2. The mod's code lives in its own repository,
+No world sync yet: that is the rest of M2. The mod's code lives in its own repository,
 **https://github.com/Egolz/forager-coop** (GPL-3.0); this folder holds the write-up only.
 That repository is also where the engine-level protocol notes and the mock peer
 (`tools/coop_mockpeer.py`) live.
@@ -104,6 +107,11 @@ exchange and bidirectional ping/pong. That is a transport test, not a co-op test
 QA still needs two Forager clients driven by an in-mod bot (see `playbook/automated-qa.md`)
 — and Forager **cannot run two instances on one PC** (checked 2026-10-20), so that test needs
 a second Windows session/VM or a second machine.
+
+M2.1 adds an offline check that does run without the game — `python tools/coop_mockpeer.py
+selftest` round-trips ten packets through the mock's encoder/parser. That catches a
+field-order slip in the mock, not a disagreement with the GML side; the two-role test is
+what would.
 
 ## How to play
 
