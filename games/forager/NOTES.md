@@ -350,6 +350,27 @@ instead of guessing at an argument-passing spelling. How (or whether) arguments 
 a first-party API script is `unknown`; the API symbol table also holds `ModCall` and `InsideMod`,
 untried.
 
+**What a `ScriptWrapper` actually is (F11, live 2026-10-20):** not the documented
+`[mod, methodName]` pair but a **3-element array**
+
+```
+ScriptWrap type   = array, len 3
+  wrap[0] = wrapper
+  wrap[1] = EgolzForagerCoop
+  wrap[2] = WaterCollision
+```
+
+The tag `"wrapper"` comes first and the mod id second. So `ScriptWrap("WaterCollision")` does
+not reach the game's own script at all - it resolves the bare name **inside our own mod** and
+hands back a lazy reference to it, which is why
+`ScriptCall(ScriptWrap("WaterCollision"))` could never have asked the game about water.
+`ModFunctionGet("Forager", "WaterCollision")` returns `undefined`, so the first-party id is
+**not** `"Forager"`; whatever it really is has to be discovered (`ModFind` / `ModIsOnline`, now
+part of the probe) rather than assumed. The one control that did run,
+`ScriptCall(ScriptWrap("GetLandsOwned"))`, returned `-1` - consistent with "no lands owned", but
+also with "the name resolved inside our mod and hit nothing", so it proves the *call path* works
+and not that first-party scripts are reachable.
+
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
 alternate gate/wall with period 2, and #68..#80 have no name at all. Rows #1..#45 and
