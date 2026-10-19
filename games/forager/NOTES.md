@@ -399,6 +399,27 @@ The host now refuses an intent whose spot is water, and the round trip is verifi
 The client rolls its optimistic placement back on `INTENT_REJECTED` (it had already drawn the
 furnace optimistically), so both ends end up agreeing with no structure on the water.
 
+**A refusal alone is not proof, so the mock now supplies the other half (2026-10-20).** The
+host's spot check is only shown to work if the *same* run also places something the host
+accepts. The mock has no `WaterCollision` of its own, so it learns where the land is by trying:
+after a `"that spot is on water"` refusal it walks a ring of offsets around the game's player
+(all within the host's 448 px range) and stops at the first confirmed `MUTATION_PLACE`. A refusal
+for any other reason stops the walk instead of repeating it, so the reason is the finding. The
+state machine is covered offline by the selftest (a socketpair, no game):
+
+```
+selftest: 11 packets encode/parse correctly, spot-retry ok
+-> INTENT_PLACE 'forge' at 728,600 (spot 1/10)
+<- INTENT_REJECTED #9839: 'that spot is on water'
+   retrying at another spot (water was at (728, 600))
+-> INTENT_PLACE 'forge' at 472,600 (spot 2/10)
+<- MUTATION seq=7 intent=#7576 room=8 'forge' at 472,600 depth -600
+   accepted: ... the spot we asked for ((472, 600)) was land
+```
+
+`tools/mock_e2e.ps1` still passes (`handshake, welcome, pong, structure table and INTENT_PLACE
+all seen`).
+
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
 alternate gate/wall with period 2, and #68..#80 have no name at all. Rows #1..#45 and
