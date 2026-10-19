@@ -536,8 +536,27 @@ ring reaches 320 px - a correct outcome, not a failure: the host refused everyth
 the mock had nowhere legal to ask. Worth noting for future tests: the candidate ring should
 follow the *owner's* island, or the mock should ask at a cell it knows is free.
 
-Only once F12 says what a real build-cell contains does the host check get a second rule;
-implementing one before that risks refusing legal spots.
+**Then the owner caught the gap that made the whole thing look wrong: a player is not a build
+spot (`0.0.11-m2i`).** The dense spiral's first candidate was offset `(0,0)` - the cell the player
+stands on - and the host **accepted** it, so the mock's furnace appeared *under the host*:
+
+```
+[03:47:29] -> INTENT_PLACE 'печь' at 595,656 (round 1, spot 1/169)
+[03:47:29] <- MUTATION seq=1 intent=#22357 room=8 'печь' at 595,656 depth -656
+[03:47:29]    accepted: ... the spot we asked for ((595, 656)) was free
+```
+
+`parSolid` does not cover characters, and in the real game you cannot build on yourself or on
+another character - so the check was incomplete, not the rule. `CoopSolidNear` now also counts
+`objPlayer`, `parNPC`, `parEnemy` and `objPet` inside the 24 px cell, resolved lazily and **skipped
+when this build does not have them**, so a renamed object costs a missing guard and never a
+COMPILE. `parEntity` is deliberately **not** in the guard: if it is a broad root (a parent of
+`parSolid` too) it would refuse legal spots, and a check that refuses too much is worse than one
+that misses a rare case - so F12 now dumps its chain and the next run adds it only if it really
+is the living-things parent. The mock also no longer offers the player's own cell as a candidate,
+which is the model the real game uses.
+
+**Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned**
 
 **Anomaly, not yet explained:** in rows #46..#80 the name column and the object column look**misaligned** - `"каменная стена"` (stone wall) reads back as `objGate`, `"железная стена"`
 as `objEmpty`, cycling `objEmpty`/`objGate`/`objFence` with period 3 while the names
