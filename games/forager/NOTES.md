@@ -228,7 +228,14 @@ The mod's M1 layer (HELLO/WELCOME handshake, PING/PONG, POS presence packets ove
 6511) was run against a **non-GML** peer (a Python script, `local/tools/coop_mockpeer.py`)
 with the game hosting. The mod completed the GameMaker socket handshake, exchanged
 HELLO→WELCOME (the peer saw the game's real mod id/version `0.0.2-m1`, protocol 1), and
-ping/ponged both ways for ~25 s with no disconnects.
+ping/ponged both ways for ~25 s with no disconnects. The owner also confirmed the
+disconnect path: the host logs `socket disconnected` + `still hosting` and keeps listening.
+
+**Presence verified with real game data.** Standing inside a world, the mod sent 467 `POS`
+packets in 26 s — `x=672 y=672 sprite=0 image=0..5 room=8` (the `image` field animating, i.e.
+genuine per-frame state) — and, from the mock's `POS` packets, drew the remote marker; the
+owner confirmed both the marker and the F8 status line. **Room 8 is the main world** (the same
+constant PencilPal hard-codes as "host room"), which is useful for the M2 zone checks.
 
 **Forager's mod sockets use GameMaker's own TCP protocol** — the part that bites anyone
 writing a peer in another language:

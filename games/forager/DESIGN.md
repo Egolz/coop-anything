@@ -103,10 +103,11 @@ a client can prove or disprove divergence.
 
 - **M0 — it loads.** ✅ 2026-10-19: the mod folder compiles in-game and `Trace`s a version
   string. Proves the toolchain.
-- **M1 — presence over LAN.** 🟡 transport done: DirectTCP host/join, GM socket handshake,
-  HELLO/WELCOME, ping/pong and POS packets verified against a non-GML mock peer
-  (2026-10-20). Still to do: two real clients, the puppet instance drawn from POS, clean
-  drop handling.
+- **M1 — presence over LAN.** ✅ 2026-10-20: DirectTCP host/join, the GM socket handshake,
+  HELLO/WELCOME, ping/pong, presence packets and the remote marker, all verified against a
+  non-GML mock peer — network, drawing and the F8 status line confirmed by the owner, plus
+  clean handling of a dropped peer. Still missing for a *release*: a real sprite puppet
+  rather than a drawn marker (deferred to M2, where puppet state matters).
 - **M2 — host-authoritative world.** Terrain edits, resource pickups, dropped items,
   structure placement via intents, with `seq` ordering.
 - **M3 — resync.** Chunked snapshot on join + checksum-based divergence recovery.
