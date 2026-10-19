@@ -277,6 +277,20 @@ source and the live build's symbol table), not measurements.
   matching what PencilPal compares: `"multiplayer vault"`).
 - `StructureGet(id, StructureData.Object)` → the object index it is built from (`objForge`).
 
+A received structure is created with `instance_create_depth(x, y, depth, object)` and then
+`structure = <structure id>` set on that instance - exactly what PencilPal's receive path
+does (`Networking.gml:937`: `with(instance_create_depth(_x, _y, _depth, _item)) { structure = _struct; }`)
+and what `CoopCreateStructure` does. PencilPal also sets a `global.deny` flag around the
+creation so the mod's own `OnStructureSpawn` does not echo it back, which is the same guard
+as this mod's `global.coopApplyingRemote`.
+
+`Structure.Count` is the one call here not yet exercised live: PencilPal never uses it (it
+syncs **object indices**, so it needs no id/name table) and it comes from the API docs. If
+it does not exist at runtime, `error.log` names the line, and the fallback is to identify
+structures by object name (`object_get_name(i.object_index)` / `asset_get_index(name)`)
+instead of building the database at all - good enough for base-game structures, though not
+for mod structures, which all share `objModStructure`.
+
 `StructureData` / `StructureType` are **compile-time enums**, so they do not appear in
 `data.win`'s symbol table even though the code above works — an absent name there is not
 proof of an absent feature. The database is not guaranteed to be up when a mod's `Main`
@@ -315,7 +329,7 @@ Mod failed to unit! Forager Coop/Net.gml[L137,c26]: Expected a statement, got nu
 Exiting compile...
 ```
 
-Two facts fall out of that, both worth knowing before writing any Forager mod:
+Several facts fall out of that, all worth knowing before writing any Forager mod:
 
 - **There are no value macros.** `#define COOP_PLACE_RANGE 448` is rejected: this loader
   reads a macro body as *statements*, so a bare number is "Expected a statement, got
@@ -329,6 +343,29 @@ Two facts fall out of that, both worth knowing before writing any Forager mod:
   that is now the mod's pre-deploy check (`tools/check_gml.py`, which also flags brackets,
   duplicate `var`s in one block, wrong macro arity and the value-macro trap). A mod compile
   itself reports only the *first* error, so an offline pass saves a round trip each time.
+- **`try`/`catch` does not compile.** The loader turns mod GML into its own AST and cannot
+  walk a `try_catch` node, so a `try` anywhere takes the game down at COMPILE time - and
+  again on every launch, because mods are recompiled. There is no on-screen message and the
+  loader console just stops (`Exiting compile...`); the game's own
+  `%LOCALAPPDATA%\Forager\error.log` is the only place that names the culprit:
+
+  ```
+  ERROR in Other Event: User Defined 0 for object ModControl:
+  Can't seekAllOut over Forager Coop/Net.gml[L150,c1] try_catch
+  ```
+
+  That is how the *second* M2.1 deploy died, after the value-macro fix above, and why the
+  mod was then rewritten without a single try/catch (guards are plain `if`s). It also
+  explains PencilPal's standing TODO *"Fix recompile crashing game"*: that mod uses
+  `try/catch` in `Networking.gml` and `GUI.gml`, so it cannot be recompiled at all in this
+  build.
+- **`error.log` is the oracle.** `%LOCALAPPDATA%\Forager\error.log` records both compile and
+  runtime failures, with a file and line for mod code. A mod that "does nothing", or a game
+  that dies on COMPILE, should be diagnosed from there before anything else is changed.
+- **The two failure modes differ.** A parse error the compiler *understands* is reported
+  nicely in the loader console (`Mod failed to unit! <file>[L,c]: <reason>`) and the game
+  survives it. A construct it cannot handle at all (`try_catch`) crashes the game instead,
+  with only `error.log` to say why. Both were hit in one session on this game.
 
 ## Derived (our reading, not facts)
 
