@@ -297,6 +297,47 @@ reasoning - the peer's sprite index distribution (0 vs 1, 19366 vs 7354), the in
 around the player, the `bodySpr` value, the distance to the host. Four of the five theories
 built before the measurements were wrong.
 
+### Steam relay for Forager: what the build does and does not have (2026-10-21)
+
+**Forager ships its own `steam_api.dll`, and it is almost - but not quite - enough.** The file
+next to `Forager.exe` is **32-bit x86**, 225 056 bytes, SHA-256
+`af17df745250d1814eaa274fff7b0faeb43381e6762e026267e5859778477abd`, and it exports **842
+names**. Among them the **whole lobby API**: `SteamAPI_ISteamMatchmaking_CreateLobby`,
+`JoinLobby`, `LeaveLobby`, `GetLobbyOwner`, `GetLobbyData`, `SetLobbyData`,
+`InviteUserToLobby`, and the friends list.
+
+**What it does not have is `ISteamNetworkingMessages`** - the interface that actually carries
+bytes. The dll is from 2019 and that interface came later. So the game's own copy can make a
+lobby but cannot move a packet through it, and the modern standalone library is needed.
+
+**The relay is not Forager work.** It is a game-agnostic TCP-over-Steam bridge, and it is
+already written: [cranebeaker/deus-ex-coop](https://github.com/cranebeaker/deus-ex-coop)
+(MIT) has `steamlink/hxcoop.c` - 750 lines of C, the flat API loaded by `GetProcAddress` with
+no SDK headers, `--port <game port>` and `--no-launch`, so it does not need to know what game
+it is in front of. The same repo has `steamlink/mock/mock_steam_api.c`, a mock library for
+testing without Steam - the Deus Ex QA suite runs the relay through it.
+
+Two things that make it cheaper here than it looks:
+
+* **The mod needs no change at all.** The join prompt already defaults to `127.0.0.1`
+  (`get_string("Co-op: enter the host's IP", "127.0.0.1")`) and the host already listens on
+  6511. Host side: the relay dials `127.0.0.1:6511` when a peer arrives over Steam. Join
+  side: the relay listens on 6511 and the game connects to it.
+* **The relay is a separate process, so it may be 64-bit** - the game is 32-bit and never
+  loads this library, so the two bitnesses do not clash. That matters because the machine has
+  **no compiler at all** (no cl, gcc, clang, cargo, dotnet, go, cmake or Docker), so a C
+  relay would need an install, while a Python one does not.
+
+One difference from the reference, and it is the important one: **HXCoop sends game data
+unreliably**, because Unreal Engine 1 does its own reliability on top. A TCP stream cannot
+work that way - one lost byte and the game's framing is broken for good - so the data channel
+has to be **reliable**, which in the Steamworks API means an unreliable hello first (an
+unreliable send is what *creates* a session; a reliable send needs one).
+
+Written and tested offline: `local/forager-coop/tools/steamlink/`. The ctypes binding against
+the real library is **unverified** - that needs `steam_api64.dll`, which has not been
+downloaded.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
