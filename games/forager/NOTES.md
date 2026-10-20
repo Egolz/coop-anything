@@ -225,6 +225,41 @@ string table, where the internal names live as `__draw_text_ext` and
 `ref_draw_init_draw_text_ext`. The modding API docs mirror does not document the drawing
 functions either; it covers only the *extended* GML and the Forager-specific functions.
 
+### The player's body is a constant asset, not the instance's sprite (2026-10-21, live)
+
+**`objPlayer.sprite_index` is 0 in this build, and it is not a sprite index.** The owner
+reported that the peer's puppet "appears only when I walk", and the measurement says why: the
+value read **0 on 19366 frames and 1 on 7354** - a flag, not an asset - while the game's
+sprites are numbered from about 1000 (a furnace reports 1097). A peer that sent that value
+could not be drawn at all, and the stand-in that used it blinked in and out.
+
+**The body probe** (a read-only scan of the objects around the player, run once per session)
+found the whole instance chain, all at the player's exact position:
+
+```
+#20 'parEntity' sprite 0   at 698,656 d 0
+#22 'objPlayer' sprite 0  at 698,656 d 0
+#46 'parAlly'   sprite 0  at 698,656 d 0
+#80 'parObject' sprite 963 at 664,616 d 53
+#80 'parObject' sprite 964 at 696,648  d 8
+```
+
+So Forager does not put the player's sprite on the instance - it draws the body from a
+**constant asset**. The cosmetic database gives the naming scheme: `sprBeetIdle`,
+`sprBeetWalk` - `spr<Name><State>` - and the player's own pair is:
+
+- **`sprPlayerIdle`**, **`sprPlayerWalk`**
+
+There are 1389 `spr*` names in `data.win`'s string table, so the name is a fact and not a
+guess: `asset_get_index("sprPlayerIdle")` returns the index, and -1 for a name that is not in
+the build, so a wrong name fails visibly instead of drawing the wrong thing.
+
+**Two dead ends worth recording:** the game's own scripts are not in `data.win` as text (they
+are compiled), so the game is not a second oracle for call signatures; and the modding API
+docs mirror does not document the drawing functions either. The **mod that runs in the build**
+(PencilPal) is the oracle that worked - the same trick that settled
+`variable_instance_exists`.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
