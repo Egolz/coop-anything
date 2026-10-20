@@ -871,8 +871,24 @@ the receiver-side dedup (`CoopDropAt` by position+item) would have **silently sw
 player's second wood**. `CoopApplyDrop` no longer dedupes at all; it creates exactly what it is
 told. The only duplicate distinguishable from the wire is the same instance `id` listed twice
 in one fire, so that - and only that - is filtered, on the **sender**, where the drop's own
-`id` is visible. Cross-fire duplication is left unhandled pending the `DEBUG_LINE` measurement
-(an `OnItemDrop` diagnostic, since `Trace()` never leaves the machine).
+`id` is visible.
+
+**The measurement, and M2.2 closed (2026-10-20).** The `DEBUG_LINE` diagnostic answered it on the
+next harvest:
+
+```
+OnItemDrop fired, 2 entries: 0:[item0 id=102045 x1 @696,664] 1:[item0 id=102046 x1 @696,664]
+```
+
+**Different `id`s in a single two-entry array** - so the two wood DROPs were two real piles, not
+a duplicate, and the receiver dedup would indeed have eaten one. One call, one array, two
+entries; the game drops each stack as its own instance. `PICKUP` followed once, because the
+player picked up one of the two. Loot sync (M2.2) is therefore closed and verified live: harvest,
+drop (single and multiple, including the citrus bonus) and pickup all travel and decode.
+
+One fact for later: a drop's `id` is an **instance id, unique per machine**, so it is only good
+as a key *within* one fire - it will never match across the two installs. Cross-fire duplicate
+detection needs a different key (a host-assigned drop sequence) and is not needed yet.
 
 ### M3 blueprint (2026-10-20) - the visible second player, from working code
 
