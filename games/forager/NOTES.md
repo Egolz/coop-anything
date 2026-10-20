@@ -648,6 +648,44 @@ for mod structures, which all share `objModStructure`.
 proof of an absent feature. The database is not guaranteed to be up when a mod's `Main`
 runs, so the mod caches it lazily (rebuild if the cache is empty) instead of once at load.
 
+**A name in `data.win` is NOT proof the loader will accept it — proven the hard way
+(2026-10-20).** `string_split` appears in `data.win`, so `check_gml.py` (which tests a name by
+looking for its bytes anywhere in the file) passed it, and the mod was deployed. The loader then
+refused to load the file at all:
+
+```
+Mod failed to unit! Forager Coop/Net.gml[L411,c11] `string_split` is not a function or script
+```
+
+Digging into the bytes explains why the symbol check cannot work as written, and why no simple
+tightening of it works either:
+
+- Built-in GameMaker functions are stored with a **`__` prefix** — the file holds
+  `__string_copy`, `__string_length`, `__string_pos`, `__array_length`, `__instance_number`,
+  `__asset_get_index`. Calling them **without** the prefix is what works in mod code, but the
+  bare name is only ever present as a *substring* of the prefixed one, so a naive "is this name in
+  the file" test finds `string_copy` and says yes.
+- Library/script symbols are stored as **length-prefixed plain names** — `string_split` really is
+  there, as `\x0c\x00\x00\x00string_split`, next to `string_join`, `string_trim`,
+  `ds_list_add_unique`, `UnixTimestamp`. So `string_split` *is* in the file by every textual test,
+  and still does not load.
+- The same length-prefixed form is used by functions that **do** work: `array_push`, `DropItem`,
+  `ItemGet`, `Trace`, `WaterCollision`, `TrueInstanceNumber`. So "plain name, no `__`" does not
+  separate working from broken either.
+
+A scanner over our own sources confirmed it: partitioning every called name by (a) absent
+entirely, (b) present only as a plain length-prefixed name, (c) present as a `__` builtin gives
+`string_split` the **same class as `array_push` and `DropItem`**, which are fine. **The difference
+is not in how the name is stored; it is in which of them the loader chooses to expose to a mod.**
+That set is not derivable from `data.win`, so `check_gml.py` can only catch the *absent* case and
+its "0 problems" must never be read as "this will load". **The compile in the modding menu is the
+only real check**, and a live COMPILE is now the gate after any new function is introduced.
+
+Practical rule taken from this: **prefer constructs that need no new builtins.** The bush probe
+was rewritten to use four **numeric** parallel arrays instead of packing a record into a string and
+splitting it, which removed the dependency altogether rather than trading it for another unproven
+string function.
+
 **`#define` macros here behave like functions, not like textual includes.** Evidence:
 PencilPal's `EaseOutBack` is used mid-expression (`var _y = EaseOutBack(_t, a, b, d);`) and
 its body ends in `return` — as a text include that would be a syntax error, and the early
@@ -889,6 +927,197 @@ drop (single and multiple, including the citrus bonus) and pickup all travel and
 One fact for later: a drop's `id` is an **instance id, unique per machine**, so it is only good
 as a key *within* one fire - it will never match across the two installs. Cross-fire duplicate
 detection needs a different key (a host-assigned drop sequence) and is not needed yet.
+
+**The bush is picked, not destroyed - and it is not a resource at all: its parent is
+`parHerb`.** The evidence, after two probes (a frame-watch that found nothing, then a
+disappearance-watch that did):
+
+```
+probe bush census: standard 7 vs true 7      <- active, so "gone" means picked, not "left the room"
+probe bush GONE: obj#86 'objBush' parent 'parHerb' id 101967 at 696,648
+OnItemDrop fired: item54 x3 @600,648         <- berries fell on the same tile
+```
+
+and the mock confirmed the removal traveled:
+
+```
+<- RESOURCE_DESTROY obj#86 at 696,648 room 8
+<- DROP item #54 x1 at 600,648   (x3)
+<- RESOURCE_DESTROY obj#86 at 600,648 room 8
+<- PICKUP item #54 at 628,656 room 8
+```
+
+Two findings, both surprising:
+
+* **This build's berry bush does NOT regrow and does NOT change frame.** PencilPal syncs
+  bushes by watching `image_index` change under `variable_instance_exists(id, "grows")`, and
+  the first probe copied that reading - watching for a frame change - and reported **nothing**
+  while two bushes were picked. A picked bush here **vanishes**. So the PencilPal
+  `grows`-and-regrow model does not describe this build's `objBush`, and copying a working
+  mod's *mechanism* without measuring this build would have produced a sync that silently did
+  nothing.
+* **A bush is not a resource: `obj#86 objBush` has parent `parHerb`.** That is the actual
+  reason `OnResourceDestroy` never fired for it - in the game's own taxonomy a bush is an
+  herb, a separate family from `parNatural` (trees, rocks, ore). It also explains PencilPal's
+  separate `["objBush", "objCotton", "objFlower"]` list, which looked like a convenience and
+  is really a different object class.
+
+Because there is no event, a bush must be **observed**: the mod remembers which plants were
+here (`objBush`/`objCotton`/`objFlower`, resolved by name with `asset_get_index`) and, when
+one vanishes, sends the **same `RESOURCE_DESTROY` the tree uses** - object index + tile. The
+far end needed no new code: `CoopApplyResourceDestroy` already matches on index+tile and walks
+with `TrueInstanceNumber`.
+
+**Known limitation, accepted 2026-10-20:** the walk uses `instance_number`/`instance_find`,
+which see only instances **active in the current room**, so a plant picked out of view is never
+seen to vanish and survives on the peer. Widening it to `TrueInstanceNumber` would catch those
+but would also make a room change look like every plant in the old room being picked at once;
+the real fix is to remember each plant's room, which belongs with the rest of the room-scoped
+world work.
+
+### M2.2 resource coverage probe (2026-10-20) - three lifecycles, not one
+
+The owner pointed out that a berry bush and built structures (which also drop items) were not
+covered. A read-only probe (`0.0.17-m2o`: `OnResourceDestroy` enriched, and **new**
+`OnStructureDestroy` and `OnResourceSpawn` handlers, both log-only) was run over stone, iron,
+a bush and a demolished furnace. The result is that **resources do not have one lifecycle but
+three**, and the mod only handled the first:
+
+| Lifecycle | Example | Event seen | Sync |
+|---|---|---|---|
+| **Removed from the world** | tree, rock, ore | `OnResourceDestroy` fires | works (M2.2) |
+| **Removed, but no event** (`parHerb`) | berry bush, cotton, flower | **no destroy event at all** | **observed, then sent as RESOURCE_DESTROY** |
+| **Structure demolished** | furnace, veranda | `OnStructureDestroy(i, structure)` | **missing** (no handler existed) |
+
+(The bush row was first written here as "picked, then regrows" from PencilPal's `grows` code.
+The live probe disproved that for this build - see the section above - and the row is corrected
+to what was actually measured: the bush is removed and simply fires no event.)
+
+**The bush is picked, not destroyed.** The evidence: picking one produced only
+`OnItemDrop fired, 1 entries: 0:[item54 (berries)]` - and **no `OnResourceDestroy`**. (What
+happens instead is now settled: the bush is removed with no event, and since its parent is
+`parHerb` it was never a resource to begin with - see the section above.)
+
+**Stone and iron are the SAME object.** Both are `obj#84 objRock`, parent `parNatural`. They are
+told apart only by **`image_index`** (stone `image 0`, iron `image 2`) and by what they drop
+(stone `item1`, iron/ore `item2`):
+
+```
+probe OnResourceDestroy: obj#84 'objRock' parent 'parNatural' at 664,664 image 0   -> item1 x3
+probe OnResourceDestroy: obj#84 'objRock' parent 'parNatural' at 696,680 image 2   -> item2 x3
+```
+
+So `object_index` + position does **not** identify a rock's kind. For *removing* the rock that is
+harmless - `CoopApplyResourceDestroy` matches `object_index` + tile and destroys what is there, and
+a rock of any kind is the right thing to remove. What breaks is **drawing**: M3 must draw the
+peer's rocks, and without `image_index` every iron and gold rock is drawn as plain stone. So the
+`image_index` change belongs to the **drawing/world-image** path (M3), **not** to
+`RESOURCE_DESTROY`, which needs no change for this. Corrected here because the earlier note said
+"wire change for M3" without saying which wire.
+
+**Structures are a separate family and the event carries the structure id.** Demolishing a furnace
+gave:
+
+```
+probe OnStructureDestroy: obj#109 'objFurnace' parent 'parStructure' structure=1 at 672,672
+OnItemDrop fired, 1 entries: 0:[item1 id=102231 x10 @672,672]   <- the furnace returned 10 stone
+```
+
+`structure=1` is the **structure database index** (row 1), i.e. the wire key we already decided
+structures should use - so `OnStructureDestroy` can send the id, not a localized name. The parent
+is `parStructure`, distinct from `parNatural`, which is a clean way to tell the two families
+apart. Note also that a structure's refund arrives as **one drop with `stack=10`**, not ten
+entries - so `stack` genuinely carries counts and must not be assumed to be 1.
+
+**Stone drops three stacks.** `OnItemDrop fired, 3 entries` with three `id`s of `item1` - the
+same "several piles per harvest" shape as wood, which is the third confirmation that the
+receiver-side dedup that was removed would have silently eaten loot.
+
+### M2.2 resource coverage, part 2 (2026-10-20) - gold ore, and why a fairy is not a resource
+
+The owner asked to cover "other resources and structures" next and named **gold ore** and a
+**fairy** as the two to try first. Checking both against the game before writing anything showed
+they are **not the same kind of thing at all**, which is the useful result:
+
+**Gold ore is a rock, not an object.** `objGold`, `objGoldOre` and `objOre` appear **0 times** in
+`data.win` - there is no separate gold-ore object. Gold is one more appearance of `objRock`, the
+same object stone and iron already use (`obj#84`, parent `parNatural`), differing only in
+**`image_index`** and in what it drops. So gold ore needs no new event, no new handler and no new
+packet: it needs the **same one change stone and iron need**, `image_index` on the wire. Until
+that change is made, every rock a peer sees is drawn as whatever the host's rock was - stone for
+stone, but still stone for iron and gold.
+
+**A fairy is a living creature, not a resource.** `objFairy` is the game's sprite/fairy critter,
+and the evidence that it is the *other* family is direct:
+
+- It sits in PencilPal's own **blacklist** of things it will not sync as world objects
+  (`Main.gml:67`): `["ModEnemy","Slime","SlimeKing","Boar",...,"parCritter","Fairy","TorchBug",
+  "Butterfly","DeathMoth","Beetle","Cow","Chicken","Sheep","MagicDeer"]` - i.e. it is filed with
+  **critters and animals**, not with resources.
+- PencilPal goes out of its way to **skip a fairy twice**, in two separate sync loops:
+  `if(string_replace(object_get_name(l), "obj", "") == "Fairy") continue;`
+  (`Networking.gml:310` and `:495`).
+
+That skip is the important part. A resource is static: it stands at an (x, y) and is removed or
+changes stage. A fairy **flies, moves on its own, and is not owned by either player** - mirroring
+it the way a rock is mirrored would not make it fly, it would make it jitter between two
+machines. So a fairy belongs with **mobs/moving things**, a family this mod does not sync at all
+yet, and it needs a **movement-style stream (like POS)**, not the resource path. Deferring it is
+the correct call, not a shortcut.
+
+This gives the coverage plan for the rest of the world, by family rather than one object at a
+time:
+
+| Family | Examples | Event / mechanism | State |
+|---|---|---|---|
+| Static resource, removed | tree, rock/stone, iron, **gold ore** | `OnResourceDestroy` (+ `image_index` on the wire) | sync written, needs `image_index` |
+| Static resource, picked and regrows | bush, cotton, flower | no destroy event; observed by change (`OnStep` bush probe) | **being measured now** |
+| Built structure | furnace, veranda, walls | `OnStructureDestroy(i, structure)` | **handler missing** |
+| Moving creature | **fairy**, cow, chicken, slime, butterfly | needs a position/tick stream, like the player's `POS` | not started |
+
+### A native crash on leaving the world, and the two bugs behind it (2026-10-20)
+
+The owner reported that "save and quit" closed the whole game instead of returning to the
+menu. It is worth recording because the diagnostic trail was as informative as the fix, and
+because the first two guesses were wrong.
+
+Symptoms, as measured rather than assumed:
+
+* Windows Application log: `APPCRASH`, `Forager.exe`, exception **`0xc0000005`** (access
+  violation), faulting offset `0x012c265f` - a **native** fault inside the exe.
+* `%LOCALAPPDATA%/Forager/error.log` was **empty** for these crashes (last entry a day
+  earlier). That is the decisive clue: a native fault never reaches the GML error handler,
+  so "no error.log entry" is itself evidence about *what kind* of failure it is.
+* Every crash that day was at a world exit (16:27 … 18:01), and the owner confirmed it
+  **only happens with a peer connected** - so it was ours, and it was about the session
+  surviving the world.
+
+**Two real bugs, found one at a time.**
+
+1. **The peer socket was leaked.** `network_destroy` was called for `coopServer` (host only)
+   and *never* for `coopSocket`; `CoopResetPeer` forgot the socket by writing `-1` over it.
+   A live socket outliving its owner is exactly the shape that faults natively. Fixed by
+   destroying it in `CoopResetPeer`, which is the single place that holds whichever socket a
+   side happens to have (the host is handed one by the async connect event, a client makes
+   its own).
+2. **Nothing listened for the world unloading.** PencilPal has `OnRoomLoad`, `OnSave` and
+   `OnLoad`; this mod had none, so a live session kept running while the world was torn
+   down. Rooms load in **both** directions - into the world and back out - so a single
+   `Events/OnRoomLoad.gml` can drive both: `CoopEnterWorld` re-seeds the per-world state,
+   `CoopLeaveWorld` drops it, and a `coopWorldLoaded` flag keeps a second room load from
+   re-seeding a session that is already live.
+
+The per-world state that mattered is the **plant snapshot** from the bush sync: it holds
+instance handles into the world that is being destroyed, and reading a destroyed instance is
+a native crash. `CoopLeaveWorld` clears it, `OnStep`/`OnDrawEnd`/`OnResourceSpawn` all gate
+on `coopWorldLoaded`, and the flag also stops POS from being sent from a player that no
+longer exists.
+
+Two guesses that the evidence killed, worth keeping so they are not re-tried: `OnItemGet`
+(a plausible "reads objPlayer while the world unloads" suspect) **is** guarded by
+`instance_exists(objPlayer)`; and deleting the peer socket inside `CoopLeaveWorld` was the
+obvious fix but would also have broken the mock-as-server transport test, so the session is
+left alone and only the *world description* is dropped.
 
 ### M3 blueprint (2026-10-20) - the visible second player, from working code
 
