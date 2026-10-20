@@ -862,6 +862,55 @@ process**, running the old constant. Bumping `PROTOCOL` in the source does nothi
 that is already running. **Restart the mock after every protocol bump**, or the test lies -
 the game is fine, the harness is stale.
 
+**A citrus drop corrected the dedup design (2026-10-20).** The second live harvest showed
+three DROPs at one tile: two wood (`#0`) and one citrus (`#55`). The owner explained the
+citrus is a random bonus a tree can give alongside its wood, so a multi-item fire is normal -
+and, crucially, **the game drops several wood stacks as separate piles**. That inverted the
+earlier guess: "two equal items at one tile" is the *common* case here, not a duplicate, and
+the receiver-side dedup (`CoopDropAt` by position+item) would have **silently swallowed a
+player's second wood**. `CoopApplyDrop` no longer dedupes at all; it creates exactly what it is
+told. The only duplicate distinguishable from the wire is the same instance `id` listed twice
+in one fire, so that - and only that - is filtered, on the **sender**, where the drop's own
+`id` is visible. Cross-fire duplication is left unhandled pending the `DEBUG_LINE` measurement
+(an `OnItemDrop` diagnostic, since `Trace()` never leaves the machine).
+
+### M3 blueprint (2026-10-20) - the visible second player, from working code
+
+The owner asked to see the other player: model, name over the head, held item, cosmetics. This
+is M3, and PencilPal - the one mod that runs in this build - **already draws exactly that**, so
+the recipe is known rather than guessed. Its `Events/OnDrawEnd.gml` is the reference:
+
+```gml
+// the partner's held item, drawn beside them
+var _sprite = ItemGet(global.partnerHold, ItemData.Sprite)
+draw_sprite_ext(_sprite, _sprite, partnerX±5, partnerY-2, 1, 1, angle, c_white, 0.5)
+// the partner's body
+draw_sprite_ext(global.partnerSprite, global.partnerImageIndex,
+                global.partnerX, global.partnerY,
+                1 * global.partnerFacing, 1, global.partnerAngle, c_white, 0.5)
+```
+
+Facts this settles:
+
+- **The puppet is drawn, not spawned.** PencilPal uses `draw_sprite_ext` in `OnDrawEnd`, not a
+  game object. Simpler than the "puppet instance" the M1 placeholder comment assumed, and it
+  sidesteps depth sorting for the first cut (no y-based depth to get wrong yet).
+- **The ghost look is alpha `0.5`** on the partner sprite - one constant, not an art problem.
+- **A held item travels as an item id** (`partnerHold`), rendered through
+  `ItemGet(id, ItemData.Sprite)` - the same id-based rule as loot. Cosmetics ride along the same
+  way: an id the far side turns into its own sprite. This is the "send facts, not pixels" idea
+  made concrete: both installs run the same Forager, so only the ids, facing and frame travel.
+- **The visual state of a puppet is four values**: `sprite`, `image_index` (animation frame),
+  `facing` (±1, flips the sprite), `angle` (0 or 90 for tools). The current `POS` packet already
+  carries sprite, facing and angle; **`image_index` is the missing piece** that makes a puppet
+  walk instead of glide, and PencilPal's own notes flag that realtime `image_index` sync was
+  "too laggy" for it and got cut - worth knowing before promising smooth animation.
+
+Planned split: **M3.1** puppet (sprite/position/facing/angle), **M3.2** animation
+(`image_index`), **M3.3** name over the head, **M3.4** held item and cosmetics. The project's
+own `Events/OnDrawEnd.gml` is where the peer marker lives today (an aqua circle), so the puppet
+replaces that placeholder in place.
+
 ## Derived (our reading, not facts)
 
 - A Forager co-op mod is a **pure GML** problem. `UndertaleModTool` / `GMEdit` operate on
