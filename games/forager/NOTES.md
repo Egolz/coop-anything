@@ -722,6 +722,58 @@ Several facts fall out of that, all worth knowing before writing any Forager mod
   survives it. A construct it cannot handle at all (`try_catch`) crashes the game instead,
   with only `error.log` to say why. Both were hit in one session on this game.
 
+### M2.2 item database (2026-10-20) - the F3 probe
+
+Started M2.2 (resources and loot) by measuring the item half before writing any sync code, the
+same order that found `WaterCollision` directly callable. Mod `0.0.12-m2j`, hotkey **F3**
+(read-only).
+
+**The event list came from PencilPal, not the docs.** The official docs document exactly one
+mod event (`OnStructureSpawn`), and mod event names are **not in `data.win`** (`OnStructureSpawn`
+appears 0 times there): the loader fires an event by looking for a file of that name in the
+mod's `Events/` folder. So the authoritative list is a mod that uses them - PencilPal's
+`Events/OnEvent.gml` holds the full set with real signatures:
+
+| Event | Signature | What it gives us |
+|---|---|---|
+| `OnResourceSpawn(l)` | instance | a resource appeared (tree, rock, ...) |
+| `OnResourceDestroy(i)` | instance | a resource was harvested |
+| `OnItemDrop(d)` | array of `{x, y, item, stack, id}` | items fell into the world |
+| `OnItemGet(items, size)` | item name, count | the player picked something up |
+| `OnMobSpawn(inst)` / `OnMobDeath(inst)` | instance | enemies (PencilPal leaves these `return`ed - WIP) |
+| `OnStructureInteract(type, structure, inst)` | ... | a structure was used |
+| `OnPlayerDamage(dodge, damage)`, `OnLevelUp(level)`, `OnRoomLoad()`, `OnSave()`, `OnLoad` | ... | misc |
+
+**The Item Database API** (documented, all five present in this build's symbol table - each
+appears exactly once): `ItemGet(id, ItemData.Name)`, `ItemCount(id, vip=false)`, `GainItem(item,
+qty)`, `RemoveItem(item, qty)`, `DropItem(x, y, item, qty)`. `Item.Count` is the row count.
+
+**Live F3 result (owner's install, 2026-10-20):**
+
+```
+Item.Count = 319, cached 319
+anchor Wood  = 0    name 'Древесина'   found-by-name -1   owned 0
+anchor Stone = 1    name 'Камень'      found-by-name -1   owned 0
+anchor Coin  = 111  name 'Монета'      found-by-name -1   owned 0
+```
+
+- **319 items**, and the anchors land exactly where the docs and PencilPal assume:
+  `Item.Wood == 0`, `Item.Stone == 1`, `Item.Coin == 111`. So the ids are stable and the wire
+  can key on them - which is what M2.2 needs.
+- **The item names are localized, exactly like the structure names.**
+  `ItemGet(Item.Wood, ItemData.Name)` returns `"Древесина"` on a Russian install, so
+  `CoopFindItem("Wood")` returns `-1` and always will. This is the same lesson the structure
+  table taught, one milestone later: **an id travels, a name is for the log.** The divergence
+  check that the item table originally ran (count matching names) would therefore have
+  screamed on two installs that merely run different languages while their ids are fine - it
+  was rewritten to compare **row count + the anchor ids**, which are build constants and
+  language-independent, and to use the names only to name the row that moved.
+
+The item table travels as new packet **13 `ITEM_TABLE`** (`u16 count`, `{ u16 id, string name }`),
+sent right after `WELCOME` alongside the structure table; the mock parses and logs it, its own
+host sends one, the selftest round-trips it (12 packets) and the e2e run asserts it, so the
+packet is covered offline before a game speaks it.
+
 ## Derived (our reading, not facts)
 
 - A Forager co-op mod is a **pure GML** problem. `UndertaleModTool` / `GMEdit` operate on
