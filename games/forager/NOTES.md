@@ -1219,6 +1219,69 @@ its own body was the nearest living thing to every request and would have refuse
 The host's own cell is still checked, so an intent that would put a structure on top of the host
 is refused.
 
+#### Third run (19:16-19:31): the corpus localises the crash to the socket teardown
+
+The corpus paid off. The last ring the mock received before the 19:31 death was:
+
+```
+... pkt5 pkt6 gotpos pos sndpos spos plants plants plants
+```
+
+Every packet in flight was read to completion (`pkt5` -> `pkt6` -> `gotpos` -> `pos`) and the
+position send finished (`sndpos`, `spos`) **before** the last `plants`. So the fault is not in a
+packet handler and not in the plant walk's own body - both complete. `place` and `placed` appear
+**16 times each** in the whole log and never once dangle, so the structure path is clean.
+
+Two measurements then killed the "accumulating leak" idea outright:
+
+* the receive rate is **flat at 0.30 packets/frame for the entire 110-second session** - 0.27 to
+  0.31, no drift, no kink, right up to the death. A leak that builds would show a slope.
+* the crash does **not** track elapsed time: it landed at tick **8700** on one run and tick
+  **6900** on the next. Different durations, same instruction.
+
+**What actually causes it: a double destroy of a socket the mod does not own.** `CoopResetPeer`
+destroyed `global.coopSocket` unconditionally, but the two sides acquire that socket by
+different routes:
+
+| side | how it gets the peer socket | who must release it |
+|---|---|---|
+| client | `network_create_socket` - it makes its own | the mod |
+| host | the runtime hands it over in the async connect event | **the runtime**, on disconnect |
+
+So on the host, a peer disconnect means the runtime has already retired the socket, and the mod's
+`network_destroy` is a **second** destroy of a dead handle - a socket whose owner is gone. That
+is a native access violation, it needs a disconnect to happen first (hence minutes, not seconds),
+it can only occur while a peer is connected, and it faults at **one fixed instruction** - which is
+exactly the signature of the sixteen crashes. The mock's own log is the clincher: every death is
+preceded by `connection closed by peer`, i.e. the peer's close, then the runtime's teardown, then
+the mod's redundant destroy.
+
+`global.coopSocketOwned` now records which kind of socket is in hand - set true where the client
+creates its own, false where the host is handed one - so the single teardown path closes the right
+one and the runtime keeps its own. **Not yet verified live**; it is deployed as `0.0.30-m2ab` and
+the next run is the test.
+
+#### The occupancy check was still wrong after the first fix
+
+The tile-corner fix above replaced `(_ix +/- 12, _iy +/- 12)` samples with `global.coopFootprint`
+(24), and that was **also wrong**, in a way the owner caught at once by building a furnace that
+landed *on a rock*. Two separate defects:
+
+* `CoopSolidNear` asked `instance_number(parSolid)`, which is **0** in this build, so the walk
+  found nothing to count and every cell read free - which is why the furnace went down on top of a
+  rock. The concrete families (`parNatural`, `parHerb`, `parStructure`, `objRock`, `objTree`) are
+  listed instead.
+* the occupancy loop asked "is a solid within `coopSolidRadius` (24) of this point?" at four points
+  **24 px apart**. The samples overlap, so one rock counted in all four and every refusal read
+  `(4 of 4 tiles)` while a single thing was there. **A radius cannot express "this cell is taken";
+  it can only express "something is near", and near is not the question.** `CoopSolidInCell` now
+  reduces a solid to its own 24 px cell and compares cell indices, so each solid counts at most
+  once and only when it truly shares ground with the build. The water check asks the same four
+  cells the same way, so nothing samples a corner anywhere.
+
+The lesson repeated from `parSolid`: **a name present in `data.win` is not proof of the behaviour
+the name suggests.**
+
 
 ### M3 blueprint (2026-10-20) - the visible second player, from working code
 
