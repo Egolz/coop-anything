@@ -260,6 +260,43 @@ docs mirror does not document the drawing functions either. The **mod that runs 
 (PencilPal) is the oracle that worked - the same trick that settled
 `variable_instance_exists`.
 
+### M3.1 done and verified live (2026-10-21) — the second player is visible
+
+**The owner confirmed: "everything works well."** What it took, in the order it was found:
+
+- **The name travels in the handshake** (`HELLO`/`WELCOME` grew a `string name`), so it is known
+  before the first puppet is drawn, and **the protocol number moved 4 → 5** because the wire
+  format moved. A peer still speaking 4 would read the name as the tail of the version string.
+- **The body sprite had to be named, not read.** The player's instance reports
+  `sprite_index` 0 (see above), so the mod resolves `sprPlayerIdle` by name and sends *that*
+  over the wire. `asset_get_index` in this build returns **0 for "not found"**, not -1 - a
+  detail that cost a run: the chain of candidate names stopped at the first 0 and the puppet
+  was silently never drawn.
+- **The text functions are Forager's, not GameMaker's** - see the section above. The size of a
+  label is the **scale**, not the fourth argument; changing the fourth argument changed
+  nothing at all.
+- **The puppet's feet are put on the ground by computation**, not by a fixed offset:
+  `drawn_y = peer_y - height + yoffset`, using `sprite_get_height` and `sprite_get_yoffset`.
+  The old guess of -30 put it in the air or underground depending on the sprite.
+- **The host decides where a peer may be drawn.** A peer with no physics (the mock) reports a
+  position inside a tree or in the water; the host checks `WaterCollision` and
+  `CoopSolidInCell` and puts the peer on the nearest cell a body could stand on.
+
+**The mock peer's two bugs, which were the mock's and not the mod's:**
+
+1. It walked a small square around the **host's live position**, so the puppet was glued to the
+   host's camera - "the mock follows the player". It now **stands still** and re-anchors only
+   when the host is more than 128 px away, which keeps "stands still" and "always visible"
+   compatible.
+2. It sent a position **before it knew where the host was**, using a hard-coded fallback
+   `(620, 620)` - an arbitrary point in the world, so the puppet could appear far away and
+   only then jump to the right place. It now reports no position until the anchor exists.
+
+**Method, the third time it paid:** every one of these was found by **measuring**, not by
+reasoning - the peer's sprite index distribution (0 vs 1, 19366 vs 7354), the instance chain
+around the player, the `bodySpr` value, the distance to the host. Four of the five theories
+built before the measurements were wrong.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
