@@ -1161,6 +1161,10 @@ cause of `0x012c265f` has not been identified. The next step is the phase marker
 build (`global.coopPhase`, announced every ~5 s): a native fault leaves no log, so the last
 phase number the peer received names the operation the game died in.
 
+> **Superseded 2026-10-21:** the cause *was* found, and it is not in this list. See
+> "The crash is FIXED" below - it is the socket being live during world teardown, fixed by
+> ending the session at the save-and-exit transition in `OnStep`.
+
 #### Second run (2026-10-20 19:16-19:20): the phase marker, and a corpus to replace it
 
 The phase marker did its job and returned a **negative**: the last line the mock received was
@@ -1282,6 +1286,100 @@ landed *on a rock*. Two separate defects:
 The lesson repeated from `parSolid`: **a name present in `data.win` is not proof of the behaviour
 the name suggests.**
 
+#### The build grid is 16 px, and the "24" was measured off the mod's own output
+
+The owner's second complaint after the occupancy fix landed was that the furnace was *still*
+wrong: "on half a cell up". It was. The game-placed and mod-placed coordinates, side by side:
+
+```
+probe spawn: obj#109 'objFurnace' at 656,608  mod24 8,8  mod12 8,8   <- the OWNER built this
+probe spawn: obj#109 'objFurnace' at 624,600  mod24 0,0  mod12 0,0   <- the MOD built this
+```
+
+The game's own structure is `656 = 16*41`, `608 = 16*38` - exactly on a **16 px** lattice. The
+mod's is a multiple of 24, which is 8 px off that lattice on Y. That is the "half a cell".
+
+The reason the mod believed 24 is the part worth remembering: **every coordinate ever sampled
+had been created by the mod itself.** The mod writes multiples of 24 because it was told to, so
+each sample "confirmed" the grid that produced it. The checks agreed with one another and not
+with the game - a circular measurement, and no amount of live re-testing could expose it while
+the only samples came from the thing under test.
+
+The circle broke when objects **no mod touches** were collected instead: the game's own natural
+spawns (rocks, trees, bushes - the map places them). Nineteen of them, from the live logs:
+
+```
+smallest non-zero gap between neighbours: 16 px on X and on Y  (gaps were 16 and 32)
+every x remainder mod 16: one constant      every y remainder mod 16: one constant
+mod 12 and mod 24: noisy, no constant
+```
+
+**16 px is the world's tiling.** The two families report different points on it - a natural
+object reports its cell (remainder 8, the cell centre), a structure reports its block corner
+(remainder 0) - but both are the same lattice, and 24 is not a step the world takes.
+
+What changed: `global.coopFootprint` 24 -> 16, the snap `round(v/24)*24` -> `round(v/16)*16`,
+`CoopSolidInCell`'s cell index `floor(v/24)` -> `floor(v/16)`, and the footprint offsets
+`+/-12` -> `+/-8` (half a cell on *this* grid). The mock's spot spiral steps 16 px and now bases
+itself on the **host's reported player**, not its own puppet - an on-grid furnace placed next to
+a stand-in standing somewhere else is not a placement test, which was the other half of the
+complaint. A new F4 probe dumps every structure with its remainder mod 8/16/24, so the next run
+reports the lattice instead of leaving it to be inferred again.
+
+The occupancy **rule** was unaffected: still cell membership, never a radius. Only the cell size
+changed, and the old corner-sample bug did not return with the new offsets because every sample
+is still a cell centre, strictly inside its cell.
+
+**The general lesson, worth more than the fix: a grid inferred from data the program itself
+produced is not evidence.** Sample something the program cannot have touched - here, the map's
+own spawns - or the measurement is a mirror.
+
+
+### The crash is FIXED (2026-10-20/21) - cause identified and verified live
+
+**Closed.** The game now returns to the menu on "save and quit". Root cause and fix:
+
+**Cause: a socket that is still live while the world tears down.** Not the world teardown
+itself, and not anything in our drawing, socket ownership, buffers, or packet lifetimes - all of
+those had been disproved earlier (above). The controlled evidence is a pair of live runs:
+
+    press F7 first (our own CoopDisconnect)  -> the game returns to the menu, no crash
+    leave the socket open                    -> the game dies ~1 s after OnRoomLoad
+
+The second run also showed the crash is **independent of placement**: with `--no-place` (the mock
+built nothing, the owner built nothing) the crash was identical, which removed the last
+structure-related theory (`instance_create_depth` + writing `.structure`).
+
+**Why closing the socket in `OnRoomLoad` was not enough.** That event fires on the way *out* -
+the world is already gone - so a close there lands inside the window that faults. The engine's own
+netcode closes its sockets at the transition instead (the reference mod's `OnStep`:
+`instance_exists(objTransition) && objTransition.target == rmInputSelect`, then
+`network_destroy`), which is the one moment early enough.
+
+**The fix** is in our `OnStep`: as soon as the transition to the menu begins, end the session.
+The guard is the same pair `CoopLeaveWorld` uses and it is naturally one-shot (the first call
+clears both flags). `OnRoomLoad`'s close stays as a safety net for a crash or forced quit.
+
+**The instruction at the fault, read with a disassembler** (capstone + pefile; the owner approved
+the install). Note this corrected an earlier pass: `0x012c265f` is an **RVA**, not a file offset.
+Treating it as a file offset shifts the reading by `0xc00` bytes (`.text`: RVA `0x1000`, raw
+`0x400`) and lands on `xorps xmm0, xmm0` - a register-only instruction that *cannot* raise an
+access violation, which is what made the first analysis nonsense. Read correctly (RVA ->
+runtime VA `0x016c265f`):
+
+    0x016c2650  push ebx
+    0x016c2658  mov esi, ecx          ; this
+    0x016c265a  call 0x16c2ca0        ; hash of the key
+    0x016c265f  mov ecx, [esi]        ; <<<< FAULT: first field read of `this`
+
+That is the engine's own hash-map lookup (chained buckets: mask hash by capacity-1, compare the
+key at `+8`, walk the chain at `+4`), called from **six** places, none of them this mod. It faults
+because `this` is null or freed. It is GML struct/`ds_map` access after free - consistent with a
+live socket delivering an async event into a teardown that has already dropped its data.
+
+**The general lesson:** an address that is already an RVA must not be re-translated as a file
+offset, and the way to tell the two apart is to decode it - an instruction that cannot fault means
+the reading is wrong, not that the fault is impossible.
 
 ### M3 blueprint (2026-10-20) - the visible second player, from working code
 
