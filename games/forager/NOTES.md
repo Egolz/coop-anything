@@ -774,6 +774,55 @@ sent right after `WELCOME` alongside the structure table; the mock parses and lo
 host sends one, the selftest round-trips it (12 packets) and the e2e run asserts it, so the
 packet is covered offline before a game speaks it.
 
+### M2.2 loot and resource sync (2026-10-20) - written, not yet run live
+
+Mod `0.0.13-m2k`, protocol **4**. Written right after the F3 probe settled that loot can key on
+**item ids**; **nothing here has been in a live game yet** - the offline suite passes, that is all
+that is claimed. Three new packets and three new event handlers.
+
+**The event signatures came from PencilPal, again.** The docs document **none** of these three,
+and the names are absent from `data.win` (they are file/define names the loader looks up), so the
+only source is a mod that runs them - `Events/OnEvent.gml`:
+
+| Event | What it really carries |
+|---|---|
+| `OnItemDrop(d)` | `d` is an **array**, one entry per dropped item, each with `.x .y .item .stack .id` |
+| `OnResourceDestroy(i)` | the instance `i`; used as `i.x`, `i.y`, `i.object_index` |
+| `OnItemGet(items, size)` | `items` = an **item id**, `size` = the count. **No position at all** |
+
+The `OnItemGet` shape is the one that changed a design. PencilPal's own handler *reconstructs* the
+tile by walking `parResource` and matching a drop within 20-30 px of the mouse, the player or a
+droid. So there is no tile in the event; our `CoopApplyPickup()` does the same walk on the far
+side instead of pretending to know an x,y the wire never carried. It searches `parResource` for a
+drop of that **item id** within ~48 px of the position the picker reported (their own player).
+
+**What a drop's tile is matched on** is `parResource`'s own `item` field - PencilPal reads
+`parResource.item` directly (line 161 of its `OnEvent.gml`), so no `ItemGet` name comparison is
+needed and no localized string is involved. That is also why `CoopDropAt()` walks
+`TrueInstanceNumber(parResource)` / `TrueInstanceFind` rather than `instance_number`: a culled
+(offscreen) drop still has to be found when the other player picks it up.
+
+**One limit copied from PencilPal's own code, recorded rather than fixed:** its `OnItemDrop` can
+`instance_destroy(d[0].id, false)` and `return` before forwarding (an industrial building absorbing
+its output, or `global.land`). Our handler announces every drop it is shown, so a drop the game
+swallows may briefly be announced. The next reconcile (pickup/destroy) corrects it; this is the
+first thing to watch in the live run, not a claim that it is right.
+
+**Scope, on purpose:** this syncs the **world** only. A drop that leaves the ground leaves it on
+both machines; **nothing moves between the two players' inventories** - `GainItem`/`RemoveItem`
+are the inventory half and are their own step (M2.4). Doing both at once is how the placement
+slice grew its "invisible structure" bug, so it is one claim at a time again.
+
+Offline coverage: the mock encodes, parses, describes and round-trips packets 14-16; the selftest
+is 15 packets; and the e2e session now has the mock host announce a `DROP`, a `PICKUP` and a
+`RESOURCE_DESTROY` that the mock client decodes, so all three are exercised with no game running.
+
+**Two GML availability checks that came out of writing this** (offline, `data.win` string counts):
+`is_struct` **0**, `variable_struct_exists` **0**, `variable_instance_exists` **0** - so none of the
+"is this thing there" predicates exist to guard a struct field read, and the field access is the
+only test. `is_array` **2** and `variable_instance_get` **2** do exist. This is the same trap as
+`ini_open`: a build's symbol table decides what a mod may even *name*.
+
 ## Derived (our reading, not facts)
 
 - A Forager co-op mod is a **pure GML** problem. `UndertaleModTool` / `GMEdit` operate on
