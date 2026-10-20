@@ -774,15 +774,43 @@ sent right after `WELCOME` alongside the structure table; the mock parses and lo
 host sends one, the selftest round-trips it (12 packets) and the e2e run asserts it, so the
 packet is covered offline before a game speaks it.
 
-### M2.2 loot and resource sync (2026-10-20) - written, not yet run live
+### M2.2 loot and resource sync (2026-10-20) - live, first harvest verified
 
-Mod `0.0.13-m2k`, protocol **4**. Written right after the F3 probe settled that loot can key on
-**item ids**; **nothing here has been in a live game yet** - the offline suite passes, that is all
-that is claimed. Three new packets and three new event handlers.
+Mod `0.0.13-m2k` (protocol **4**), then `0.0.14-m2l` for the duplicate investigation.
+Three new packets and three new event handlers.
 
-**The event signatures came from PencilPal, again.** The docs document **none** of these three,
-and the names are absent from `data.win` (they are file/define names the loader looks up), so the
-only source is a mod that runs them - `Events/OnEvent.gml`:
+**First live harvest (2026-10-20, tree at 664,680, room 8).** Felling one tree delivered
+the whole loop, every packet decoding correctly:
+
+```
+<- RESOURCE_DESTROY obj#85 at 664,680 room 8
+<- DROP item #0 x1 at 664,680 room 8
+<- DROP item #0 x1 at 664,680 room 8
+<- PICKUP item #0 at 673,679 room 8
+```
+
+- `OnResourceDestroy` carries the **object index** (85), not a name - as designed.
+- `OnItemDrop` carries **item #0** = Wood, the id F3 had pinned.
+- `OnItemGet` carries **item #0** and *no tile*; the `PICKUP` position (673,679) is the
+  **player's** position, and the drop was found next to it - which is the whole reason
+  `CoopApplyPickup` searches by radius instead of trusting a coordinate the event never
+  sent.
+
+**The open question the live run created: why TWO identical DROPs.** Both were
+byte-identical (`664,680`, item 0, stack 1). From the wire alone that is ambiguous:
+one call carrying a two-entry array (two piles that really exist) reads exactly like the
+event firing once per instance (one pile reported twice). The difference matters on the
+receiver - one is a pile to mirror, the other a pile to dedupe. So `0.0.14-m2l` does two
+things: `OnItemDrop` now traces the **array length** (which answers it on the next
+harvest), and `CoopApplyDrop` gained a second dedup layer - a short-lived pending list for
+the case where the duplicate arrives *before* `DropItem()` has materialised its instance,
+which is the timing the live run actually showed. The list is drained each step by
+`CoopTickPendingDrops()`, so it cannot grow without bound and a genuine later drop still
+lands.
+
+**The event signatures came from PencilPal, again.** The docs document **none** of these
+three, and the names are absent from `data.win` (they are file/define names the loader
+looks up), so the only source is a mod that runs them - `Events/OnEvent.gml`:
 
 | Event | What it really carries |
 |---|---|
@@ -790,38 +818,49 @@ only source is a mod that runs them - `Events/OnEvent.gml`:
 | `OnResourceDestroy(i)` | the instance `i`; used as `i.x`, `i.y`, `i.object_index` |
 | `OnItemGet(items, size)` | `items` = an **item id**, `size` = the count. **No position at all** |
 
-The `OnItemGet` shape is the one that changed a design. PencilPal's own handler *reconstructs* the
-tile by walking `parResource` and matching a drop within 20-30 px of the mouse, the player or a
-droid. So there is no tile in the event; our `CoopApplyPickup()` does the same walk on the far
-side instead of pretending to know an x,y the wire never carried. It searches `parResource` for a
-drop of that **item id** within ~48 px of the position the picker reported (their own player).
+The `OnItemGet` shape is the one that changed a design. PencilPal's own handler
+*reconstructs* the tile by walking `parResource` and matching a drop within 20-30 px of the
+mouse, the player or a droid. So there is no tile in the event; our `CoopApplyPickup()`
+does the same walk on the far side instead of pretending to know an x,y the wire never
+carried. It searches `parResource` for a drop of that **item id** within ~48 px of the
+position the picker reported (their own player).
 
 **What a drop's tile is matched on** is `parResource`'s own `item` field - PencilPal reads
-`parResource.item` directly (line 161 of its `OnEvent.gml`), so no `ItemGet` name comparison is
-needed and no localized string is involved. That is also why `CoopDropAt()` walks
-`TrueInstanceNumber(parResource)` / `TrueInstanceFind` rather than `instance_number`: a culled
-(offscreen) drop still has to be found when the other player picks it up.
+`parResource.item` directly (line 161 of its `OnEvent.gml`), so no `ItemGet` name
+comparison is needed and no localized string is involved. That is also why `CoopDropAt()`
+walks `TrueInstanceNumber(parResource)` / `TrueInstanceFind` rather than `instance_number`:
+a culled (offscreen) drop still has to be found when the other player picks it up.
 
-**One limit copied from PencilPal's own code, recorded rather than fixed:** its `OnItemDrop` can
-`instance_destroy(d[0].id, false)` and `return` before forwarding (an industrial building absorbing
-its output, or `global.land`). Our handler announces every drop it is shown, so a drop the game
-swallows may briefly be announced. The next reconcile (pickup/destroy) corrects it; this is the
-first thing to watch in the live run, not a claim that it is right.
+**One limit copied from PencilPal's own code, recorded rather than fixed:** its
+`OnItemDrop` can `instance_destroy(d[0].id, false)` and `return` before forwarding (an
+industrial building absorbing its output, or `global.land`). Our handler announces every
+drop it is shown, so a drop the game swallows may briefly be announced. The next reconcile
+(pickup/destroy) corrects it; this is the first thing to watch in the live run, not a claim
+that it is right.
 
-**Scope, on purpose:** this syncs the **world** only. A drop that leaves the ground leaves it on
-both machines; **nothing moves between the two players' inventories** - `GainItem`/`RemoveItem`
-are the inventory half and are their own step (M2.4). Doing both at once is how the placement
-slice grew its "invisible structure" bug, so it is one claim at a time again.
+**Scope, on purpose:** this syncs the **world** only. A drop that leaves the ground leaves
+it on both machines; **nothing moves between the two players' inventories** - `GainItem`/
+`RemoveItem` are the inventory half and are their own step (M2.4). Doing both at once is how
+the placement slice grew its "invisible structure" bug, so it is one claim at a time again.
 
-Offline coverage: the mock encodes, parses, describes and round-trips packets 14-16; the selftest
-is 15 packets; and the e2e session now has the mock host announce a `DROP`, a `PICKUP` and a
-`RESOURCE_DESTROY` that the mock client decodes, so all three are exercised with no game running.
+Offline coverage: the mock encodes, parses, describes and round-trips packets 14-16; the
+selftest is 15 packets; and the e2e session now has the mock host announce a `DROP`, a
+`PICKUP` and a `RESOURCE_DESTROY` that the mock client decodes, so all three are exercised
+with no game running.
 
-**Two GML availability checks that came out of writing this** (offline, `data.win` string counts):
-`is_struct` **0**, `variable_struct_exists` **0**, `variable_instance_exists` **0** - so none of the
-"is this thing there" predicates exist to guard a struct field read, and the field access is the
-only test. `is_array` **2** and `variable_instance_get` **2** do exist. This is the same trap as
-`ini_open`: a build's symbol table decides what a mod may even *name*.
+**Two GML availability checks that came out of writing this** (offline, `data.win` string
+counts): `is_struct` **0**, `variable_struct_exists` **0**, `variable_instance_exists` **0** -
+so none of the "is this thing there" predicates exist to guard a struct field read, and the
+field access is the only test. `is_array` **2**, `variable_instance_get` **2** and
+`array_set` **1** do exist. This is the same trap as `ini_open`: a build's symbol table
+decides what a mod may even *name*.
+
+**A test-tool lesson that cost one run (2026-10-20).** The first live attempt of this build
+failed with `REJECT reason='protocol mismatch: host 4, peer 3'` on every reconnect: the
+freshly compiled game spoke protocol 4 while the **background mock was still the previous
+process**, running the old constant. Bumping `PROTOCOL` in the source does nothing to a mock
+that is already running. **Restart the mock after every protocol bump**, or the test lies -
+the game is fine, the harness is stale.
 
 ## Derived (our reading, not facts)
 
