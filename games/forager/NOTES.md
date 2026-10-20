@@ -179,6 +179,52 @@ drones, vaults (a custom "Multiplayer Vault" structure), the partner puppet
   (`assets/files/forager.zip`). Not downloaded yet; download only with owner approval,
   pinned by SHA-256 (rule 8).
 
+### Forager's text functions are NOT GameMaker's (2026-10-21, live)
+
+**The modding API's drawing functions have different signatures from the GameMaker ones**, and
+the mod loader rejects the stock call. Live evidence, from the owner's console:
+
+    Mod failed to unit! Forager Coop/Events/OnDrawEnd.gml[L93,c1]
+    `draw_text_ext` takes 5 arguments, got 8
+
+The stock `draw_text_ext` is `(x, y, string, color, alpha, alignment, xscale, yscale)` - eight
+arguments. This build's takes **five**. The same happened with the sprite getters:
+`sprite_get_yoffset` takes **1** argument here, not 2 - the subimage variant of the sprite
+getters is not in this build, unlike in the GameMaker manual.
+
+**The real signatures are in the one mod that runs in this build** (PencilPal, Workshop
+2843162754, `GUI.gml`) - the same trick that settled the `variable_instance_exists` question:
+
+```gml
+draw_text_ext(x, y, string, size, width)                                    // 5
+draw_text_ext_transformed_color(x, y, string, size, width,
+                                xscale, yscale, rotation,
+                                c1, c2, c3, c4, alpha)                     // 13
+draw_text_transformed_color(x, y, string, xscale, yscale, rotation,
+                             c1, c2, c3, c4, alpha)                          // 11
+```
+
+- `draw_text_ext(1265, 32, ping, 3, 300)` - the fourth argument is a **text size** and the
+  fifth a **wrap width**. Stock `draw_text_ext` has alignment and two scales in those slots
+  instead, so the stock call cannot be adapted by reordering the arguments: it is a different
+  function.
+- The transformed variants take **four colours**, not one (the reference mod passes the same
+  colour four times for flat text).
+- The scales and the rotation sit in slots 6, 7, 8 of the "ext_transformed" variant - the same
+  slots they occupy in the non-"ext" variant, which confirms the reading.
+
+**Method, worth more than the signatures:** a mod that runs in the build is a better oracle
+than the manual, and the loader's own error message is exact and free - but each one costs a
+round trip through the game. The fix for that is to record the arities in the local checker
+(`tools/check_gml.py` now has a `BUILTIN_ARITIES` table) so the mistake is caught before the
+game is launched, with the loader's own wording.
+
+**A dead end worth recording:** the game's own scripts are **not** in `data.win` as text (they
+are compiled), so the game cannot be used as a second oracle - `data.win` holds only the
+string table, where the internal names live as `__draw_text_ext` and
+`ref_draw_init_draw_text_ext`. The modding API docs mirror does not document the drawing
+functions either; it covers only the *extended* GML and the Forager-specific functions.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
