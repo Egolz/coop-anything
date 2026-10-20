@@ -1075,49 +1075,150 @@ time:
 | Built structure | furnace, veranda, walls | `OnStructureDestroy(i, structure)` | **handler missing** |
 | Moving creature | **fairy**, cow, chicken, slime, butterfly | needs a position/tick stream, like the player's `POS` | not started |
 
-### A native crash on leaving the world, and the two bugs behind it (2026-10-20)
+### A native crash with a peer connected: what is known, and what was ruled out (2026-10-20)
 
-The owner reported that "save and quit" closed the whole game instead of returning to the
-menu. It is worth recording because the diagnostic trail was as informative as the fix, and
-because the first two guesses were wrong.
+The owner reported that "save and quit" (and, later, just playing for a few minutes) closed
+the whole game instead of returning to the menu. **It is not fixed yet.** What follows is the
+honest state: the measurements, the two explanations that were proposed and disproved, and
+the one real bug the investigation did turn up.
 
 Symptoms, as measured rather than assumed:
 
-* Windows Application log: `APPCRASH`, `Forager.exe`, exception **`0xc0000005`** (access
-  violation), faulting offset `0x012c265f` - a **native** fault inside the exe.
-* `%LOCALAPPDATA%/Forager/error.log` was **empty** for these crashes (last entry a day
-  earlier). That is the decisive clue: a native fault never reaches the GML error handler,
-  so "no error.log entry" is itself evidence about *what kind* of failure it is.
-* Every crash that day was at a world exit (16:27 … 18:01), and the owner confirmed it
-  **only happens with a peer connected** - so it was ours, and it was about the session
-  surviving the world.
+* Windows Application log: `APPCRASH`, `Forager.exe` (32-bit, version 3.0.0.0), exception
+  **`0xc0000005`** (access violation), faulting offset **`0x012c265f`**.
+* **The offset is identical in all sixteen crashes** of that evening (16:27 … 18:52). That
+  is the single most useful fact: a leak or a race produces a spread of faulting addresses,
+  while one fixed address is one instruction failing under one condition. It also maps into
+  the exe's `.text` section (RVA `0x012c325f`), i.e. it is the runner's own compiled code,
+  not our GML.
+* `%LOCALAPPDATA%/Forager/error.log` was **empty** for these crashes. A native fault never
+  reaches the GML error handler, so "no error.log entry" is itself evidence about *what kind*
+  of failure this is.
+* **No crash before 16:24 that day.** The loot and resource sync of M2.2 landed at 16:24;
+  every crash is after it. That narrows the search to the M2.2 code paths.
+* The peer stops replying to PING several seconds before the process dies, while the game is
+  still sending PING - i.e. **the receive path stops before the send path does**.
 
-**Two real bugs, found one at a time.**
+**Ruled out, with the evidence that killed each:**
 
-1. **The peer socket was leaked.** `network_destroy` was called for `coopServer` (host only)
-   and *never* for `coopSocket`; `CoopResetPeer` forgot the socket by writing `-1` over it.
-   A live socket outliving its owner is exactly the shape that faults natively. Fixed by
-   destroying it in `CoopResetPeer`, which is the single place that holds whichever socket a
-   side happens to have (the host is handed one by the async connect event, a client makes
-   its own).
-2. **Nothing listened for the world unloading.** PencilPal has `OnRoomLoad`, `OnSave` and
-   `OnLoad`; this mod had none, so a live session kept running while the world was torn
-   down. Rooms load in **both** directions - into the world and back out - so a single
-   `Events/OnRoomLoad.gml` can drive both: `CoopEnterWorld` re-seeds the per-world state,
-   `CoopLeaveWorld` drops it, and a `coopWorldLoaded` flag keeps a second room load from
-   re-seeding a session that is already live.
+1. **"The incoming async buffer leaks."** Tempting: nothing freed it, and the symptom profile
+   (fine for a minute, then dead) fits a leak. It is wrong - the GameMaker manual is explicit
+   that the buffer "will be automatically freed when the event is over". The `buffer_delete`
+   added on the strength of this guess was therefore a **double free**, and the crash arrived
+   *sooner* with it (~6 s after the last reply) than without (~8 s), which is what a double
+   free does to a heap. Removed, with a comment so it is not "fixed" again.
+2. **"The peer socket leaks across a reconnect."** The mock log shows the mock connected
+   **once**; the "session 2" line is a reconnect *attempt after the crash*. No reconnect, no
+   accumulated sockets. (The socket is still now destroyed in `CoopResetPeer`, which is
+   correct on its own terms, but it is not the cause.)
+3. **"A garbage item id from a mis-parsed DROP goes out of range in `DropItem`."** This was
+   the strongest theory, and it is **disproved by arithmetic**. The field order *was* wrong
+   (see below), but unpacking a real `DROP` payload the wrong way shifts every field by
+   exactly one byte, and the item id happens to survive that shift intact; the dropped id was
+   therefore always valid. Worse, the room byte read back as `0` in every case, so the room
+   test failed first and `break` ran **before** `CoopApplyDrop` was reached at all. No packet
+   of 2026-10-20 ever reached `DropItem`.
+4. **"`instance_destroy` on a deactivated instance."** A real hazard in GameMaker and a real
+   defect in this mod (see below), but it cannot be the crash either: the three loot packets
+   were being discarded before any apply ran, so nothing was destroyed.
 
-The per-world state that mattered is the **plant snapshot** from the bush sync: it holds
-instance handles into the world that is being destroyed, and reading a destroyed instance is
-a native crash. `CoopLeaveWorld` clears it, `OnStep`/`OnDrawEnd`/`OnResourceSpawn` all gate
-on `coopWorldLoaded`, and the flag also stops POS from being sent from a player that no
-longer exists.
+**The one real bug found.** The field order of `DROP`, `PICKUP` and `RESOURCE_DESTROY` was
+read differently from the way it was written:
 
-Two guesses that the evidence killed, worth keeping so they are not re-tried: `OnItemGet`
-(a plausible "reads objPlayer while the world unloads" suspect) **is** guarded by
-`instance_exists(objPlayer)`; and deleting the peer socket inside `CoopLeaveWorld` was the
-obvious fix but would also have broken the mock-as-server transport test, so the session is
-left alone and only the *world description* is dropped.
+```
+sender :  u8 room, s32 x, s32 y, u16 item, ...
+reader :  s32 x,   s32 y, u8 room,  u16 item, ...     <- wrong
+```
+
+GML does not complain - the buffers are untyped and a wrong read returns a wrong number - and
+`docs/PROTOCOL.md` had documented the *correct* order all along, so the code contradicted its
+own spec. The effect was that **every incoming loot and resource packet was silently
+discarded**, because the room byte read back as `0` and the room test failed first. That is a
+complete explanation of a *different* symptom (the mock never saw its drops or destructions
+mirrored) and it is now fixed, with a checker that fails the build on any future mismatch:
+`tools/check_gml.py` compares, per packet, the `buffer_write` order in the sender against the
+`buffer_read` order in its `case`, and also fails a packet that is written and never read
+(which is how a write-only `DEBUG_LINE` handler was caught). The check was verified by
+reintroducing the exact bug.
+
+**The other real defect.** `CoopApplyResourceDestroy` and `CoopDropAt` walked `TrueInstance*`,
+which returns **deactivated** instances as well as active ones, and the first of them called
+`instance_destroy` on whatever it found. A deactivated instance is not safe to destroy. Both
+now walk `instance_number`/`instance_find` (active only), matching the set the plant snapshot
+observes. `CoopStructureAt` keeps the true-instance walk on purpose: it only **reads**, and
+reading is safe.
+
+**Why the plant snapshot announced one bush four times** (live: `RESOURCE_DESTROY obj#86 at
+616,728` at 18:50:42, :43, :49, :55): the snapshot is built from active instances, so a bush
+the room merely **culled** (the player walked away) looked picked. It came back into view, was
+culled again, and was announced again. `CoopPlantStillExists` now asks the true-instance walk
+whether the plant is really gone before announcing, which separates "culled" from "picked".
+
+**Still open.** With those three fixed the native crash may be gone - the discarded packets
+mean the apply paths were never exercised before, and it is possible the crash came from
+somewhere in the send path that is now different. But that is a **hope, not a finding**: the
+cause of `0x012c265f` has not been identified. The next step is the phase marker now in the
+build (`global.coopPhase`, announced every ~5 s): a native fault leaves no log, so the last
+phase number the peer received names the operation the game died in.
+
+#### Second run (2026-10-20 19:16-19:20): the phase marker, and a corpus to replace it
+
+The phase marker did its job and returned a **negative**: the last line the mock received was
+`probe tick 8700 rx 2822 phase 10 player 1`, and phase 10 is "walking the plant snapshot" - a
+phase that is *set* and never reset, so a frozen value says only "somewhere at or after this
+point", not where. 8700 ticks also settles one thing the owner had guessed at: the session ran
+**about 2.5 minutes and died on its own**, not at world exit.
+
+Two further facts from the same log:
+
+* `rx` grew at ~0.33 packets per tick (one packet every three frames, i.e. the mock's POS
+  stream) with no discontinuity up to the last tick - the receive path was healthy right up to
+  the fault, so this is not a "packet handler half-way through a read" signature.
+* The mock's own last lines are `-> PING nonce=126` at 19:20:43 and `connection closed by peer`
+  at 19:20:44 - **the send path was still alive one second before the process died**, while the
+  game's replies to `<- PING nonce=98/...` had already stopped. Same asymmetry as before:
+  receive dies first, send lasts longer.
+
+Conclusion: the phase marker cannot localise a fault that lands *between* marker changes, so it
+was replaced (leaving it in place as a coarse hint) by a **packet corpus**: `global.coopTrace`
+is a capped ring of short operation tokens - `pkt26`, `gotpos`, `pos`, `sndpos`, `spos`,
+`plants`, `place`, `placed`, `watrej`, `occ`, `mplace`, `mplacesdone` - which is sent whole with
+every addition over the existing `DEBUG_LINE` channel. The last corpus the peer holds reads like
+a flight recorder: one that stops after `watrej` places the fault in the code *after* the
+refusal walk, and one that stops after `place` puts it inside `CoopCreateStructure` on the host.
+
+It is deliberately **sender-side only** - no new packet, nothing asked of the peer - which is
+the one property that makes it safe: `DebugLine` is fire-and-forget, so a diagnostic built on it
+cannot fail because the peer (a test tool) did not answer. One earlier design in this
+investigation was an outstanding-request scheme that would have been an assertion no run could
+ever satisfy.
+
+#### Placement refusals: the spot check was sampling tile corners
+
+Separately from the crash, the mock still never placed its furnace, and the reason turned out
+**not** to be placement. The run's refusals were 252 out of 252 asks, and the killer line is:
+
+```
+-> INTENT_PLACE 'печь' at 672,672          <- the known-free cell, on land
+<- INTENT_REJECTED #28032: 'that spot is already occupied (1 of 4 tiles)'
+```
+
+`672,672` is the cell a structure was observed standing on in the live probes. The host refused
+it. The water and occupancy checks were sampling `(_ix +/- 12, _iy +/- 12)`, which on a 24 px
+grid is the **shared corner of four tiles** - the one point where "which tile is this?" has no
+answer, and the game's tile test resolves it differently from its own builder. A 2x2 structure
+asked at six neighbours of the player was refused six times out of six, all false. That is the
+whole of "the mock never placed a furnace".
+
+The four points that actually cover a 2x2 block are its **cell centres**, 24 px out along each
+axis (`global.coopFootprint`). The same bug also produced `(4 of 4 tiles)` for a *single* tree,
+because one corner sample was counted in all four cells at once.
+
+The player was then removed from the occupancy test: the mock asks for a spot next to itself, so
+its own body was the nearest living thing to every request and would have refused all of them.
+The host's own cell is still checked, so an intent that would put a structure on top of the host
+is refused.
+
 
 ### M3 blueprint (2026-10-20) - the visible second player, from working code
 
