@@ -815,15 +815,57 @@ with `sprite_get_number`, because a frame past a sprite's end draws **nothing**.
     walking 1 s:    follows the distance exactly (gap 0.000 units)
 
 **The "only the left leg" half is a second, separate cause**, and worth keeping apart from the
-first: the body sprite has been **`sprPlayerIdle`** whatever the peer was doing - the mock sends
-`sprite = -1`, so the fallback was always the idle one, and a running frame drawn on an idle sprite
-is one stance with a leg picked by a counter. The fallback picks `sprPlayerWalk` for a walking peer
-now.
+first. The body sprite is resolved by **name**, and the name the resolver starts from -
+`sprPlayerIdle` - **does not resolve in this build** (live: `sprite 'sprPlayerIdle' -> NOT FOUND`),
+*even though that string is in `data.win`*. The raw byte scan lists **strings, not assets**: a sprite
+name can sit in the string table and still not be addressable. The chain then fell through to
+`sprPlayerWalk` (id 1, six frames) - so a **standing** peer was drawn from the **walk** sprite, and
+the walk sprite's frames alternate legs, which is what "only the left leg" looks like.
+
+### The idle bob is the cosmetic layers' `Idle` sprites, played at the sprite's own speed (2026-10-22)
+
+The owner's next request:
+
+> the mock animates slowly and freezes - fine, let's start with the idle bob of the head and backpack
+> while standing still. Find that animation and pick up its speed.
+
+**What the bob is.** The Forager modding docs say the player is drawn as **four stacked cosmetic
+layers** - *Wing -> Backpacks -> Body -> Head* - and every cosmetic is created with its own pair:
+
+    CosmeticCreate(undefined, "beet", CosmeticType.Body, sprBeetIdle, sprBeetWalk, ...)
+
+So **the bob is each layer's `Idle` sprite**, and an `Idle` sprite is an **animation**, not a still.
+That is the whole shape of the feature: play the idle sprite's frames while the peer stands still,
+instead of freezing on one walk-stance frame.
+
+**The speed is the asset's, not a constant.** `sprite_get_speed` is frames-per-image (type 0) or
+images-per-frame (type 1) - the two are **inverses**, and `sprite_get_speed_type` says which - and
+the puppet advances its idle frame by `speed / 16.667` per millisecond. "Pick up its speed" has to
+mean the asset's own number, or the bob drifts from the player's.
+
+**Which names are real is asked of the game, not read out of the file.** The new asset probe prints
+id, frame count, w/h, yoffset, `sprite_get_speed` and `sprite_get_speed_type` for
+`sprPlayerIdle`, `sprPlayerIdleNew`, `sprBodyIdle`, `sprPlayerGlassesIdle`, `sprPlayerPinkBowIdle`
+and `sprBackpackIdle`, and `CoopResolveIdleSprite` walks those candidates in turn. **This is the
+answer that is still outstanding** - the live numbers from that probe decide the rate, and the code
+uses a slow fallback until they arrive.
+
+Two parsers for `data.win`'s SPRT/STRG chunks were written and **both were wrong** (the STRG entry
+list is not `(offset, length)` pairs; the offsets came out as 2,053,731,167, and slicing that from a
+107 MB file simply hangs). They were abandoned rather than debugged further: the game is the
+authoritative oracle for what is an asset, and one probe line asks it. `sprite_get_speed` and
+`sprite_get_speed_type` were confirmed present in the build by name-count before use, because an
+unknown function is a **compile** error that kills the whole mod.
 
 **The lesson, and it is the same one twice in two rounds:** the repo held **two** measurements of
 the same object that disagreed by ~4x (4.76 vs 12.2 px per unit, and 0.32 s vs 1.36 s per cycle),
 and code went on top of both before either was reconciled. *When two numbers about one thing
 disagree, the answer is a probe, not an average and not a choice.*
+
+A second, quieter lesson from the same round: two comment blocks in the draw handler still said
+`image_index` **is** the frame at **4.76 px** per unit, directly above code that contradicted both.
+They were deleted. *A comment that disagrees with the code next to it is how the next wrong guess
+gets written* - this file has now had exactly that happen twice.
 
 ### `while` IS proven in this loader - by our own code, not by the reference mod (2026-10-22)
 
