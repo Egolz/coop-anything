@@ -510,6 +510,30 @@ The wire-layout checker (`tools/check_gml.py`) covers the new packet like every 
 the `buffer_write` order in the sender is compared with the `buffer_read` order in its
 `case`, and a packet that is written and never read is a failure.
 
+### The world is watched, not queried: there is no "list every structure" call (2026-10-21)
+
+**The structure database holds the *types*, not the instances.** `Structure.Count` is 92 rows
+of "what a furnace is", and `StructureGet(l, StructureData.Object)` gives that row's object -
+it says nothing about which buildings are standing in the world right now. There is no call
+that answers "every structure in the world" ✗ (the API surface was checked; the names in
+`data.win` are the same story).
+
+So the world has to be **watched**: `OnStructureSpawn(id, structure)` is the only place that
+sees a structure *and* its database id at the same time - the instance gives the position,
+the argument gives the id the far end needs to build the same thing.
+
+**The list has to be filled before every guard in that event**, including "no peer" and "no
+player". The buildings that matter for a snapshot are the ones that were **already standing
+when the peer joined** - the ones the owner had built before the session started - and their
+event fired long before anybody connected. A list filled only while a peer was watching
+would hold exactly the wrong half of the world.
+
+**And the game's console is the one place the harness cannot read.** A mod here cannot
+write a file (`ini_open` is not in the loader's function table), so the game's own `Trace`
+output never leaves the game. The mod's `DEBUG_LINE` packet is the only channel that
+reaches the peer - and it only carries what the mod explicitly sends ✗. Every important
+line now goes over it, or the harness is blind to what the game actually did.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.

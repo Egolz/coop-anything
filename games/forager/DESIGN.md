@@ -139,9 +139,15 @@ a client can prove or disprove divergence.
     land, in chunks of 512, with a generation byte and an end marker; the client fills in the
     cells it is missing and, behind a flag, removes the land the host does not have. Both
     function names (`PlaceLandfill`, `RemoveLandfill`) and the whole shape come from
-    PencilPal, the one mod known to run in this build — see `NOTES.md`. The structures and
-    the resources are still missing from the snapshot, and until they are there the client's
-    world is the host's **ground** but not yet the host's **contents**.
+    PencilPal, the one mod known to run in this build — see `NOTES.md`.
+  - **M3.2 the world snapshot — the buildings.** ✅ code written 2026-10-21 (packet 18
+    `SNAP_STRUCT`): the host sends its structures as (position, **database id**), and the
+    client adopts or builds each one. There is **no call that lists the structures in the
+    world** — the database holds the types, not the instances — so the world is *watched*
+    through `OnStructureSpawn`, and the list is filled before that event's guards, because
+    the buildings that matter are the ones that were standing before the peer joined. Still
+    missing from the snapshot: the **resources** (trees, rocks, bushes), so the two islands
+    still have to have the same trees in the same places.
 - **M4 — Steam relay.** Swap DirectTCP for the Spacewar relay backend; no port forwarding.
 - **M5 — automated QA.** Two scripted clients that perform fixed mutations and compare
   shared-state hashes; log PASS/FAIL.
