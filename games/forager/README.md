@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | Engine | **GameMaker Studio 2** (data file `data.win`) |
-| Versions tested | **Steam build 6160665** — modding toolchain **and** the M1 DirectTCP network layer run in-game; no co-op world sync yet |
+| Versions tested | **Steam build 6160665** — the modding toolchain, the DirectTCP network layer, the world snapshot and the loot sync all run in-game |
 | Projects | PencilPal / PenPal (dead, see below); **Forager Co-op** — a from-zero mod started here: https://github.com/Egolz/forager-coop |
-| QA level | none |
-| Last updated | 2026-10-20 |
+| QA level | **automated** for the protocol and the snapshot (an offline mock-peer suite plus live runs of the game against that mock); the **two-human** session is still unverified — Forager refuses to run twice on one PC |
+| Last updated | 2026-10-21 |
 
 ## Where things stand
 
@@ -16,6 +16,24 @@ built, beta-tested and then cancelled in 2021 for instability. The community mod
 and is reported to crash constantly. The realistic options are streaming the host's game
 (Steam Remote Play Together / Parsec) or building a new mod — which is what this game
 folder is for.
+
+**The from-zero mod is now past the halfway mark**, and every part of it below is
+**verified in the live build**, not merely written:
+
+| Piece | State | What it does |
+|---|---|---|
+| host/join | works | F5 hosts on TCP 6511, F6 joins; the handshake checks the protocol number and carries the player's name |
+| the second player | works | the peer is drawn with their own body sprite, their name centred above their head, and the game's own speech text is left where the game put it |
+| the world's ground | works | on join the host sends every land cell of the 84 × 84 grid in chunks; the client makes the cells it is missing into land with the game's own `PlaceLandfill` |
+| the world's buildings | works | the host sends its structures as (position, database id); the client adopts the ones it has and builds the ones it does not |
+| loot and resources | works | a harvested tree or rock and every dropped item are announced and mirrored; the item and structure databases are compared for divergence |
+| Steam relay | written, **not yet played** | a TCP-over-Steam bridge in `tools/steamlink/`, proven against the real Steam library (lobby, lobby data, a message round trip) |
+| two humans in one session | **unverified** | needs a second Steam account and a second machine — Forager refuses to run twice on one PC and Steam refuses two instances of one game for one account |
+
+**What is still missing:** the client's puppet does not animate yet, the held item is not
+shown, the story state is not shared, the Void and the temples are not reachable from the
+other side, and the bought land is only transferred when the client joins.
+
 
 ## Existing work
 
