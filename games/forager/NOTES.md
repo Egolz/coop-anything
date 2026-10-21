@@ -334,9 +334,31 @@ work that way - one lost byte and the game's framing is broken for good - so the
 has to be **reliable**, which in the Steamworks API means an unreliable hello first (an
 unreliable send is what *creates* a session; a reliable send needs one).
 
-Written and tested offline: `local/forager-coop/tools/steamlink/`. The ctypes binding against
-the real library is **unverified** - that needs `steam_api64.dll`, which has not been
-downloaded.
+Written and tested: `local/forager-coop/tools/steamlink/`. The relay's logic is proven offline
+(two relays, a mock Steam, a fake game server, bytes in one end out the other, also with 30%
+of the unreliable messages dropped), and the ctypes binding is proven against the **real**
+library: the flat API initialises, a lobby is created, lobby data survives a round trip, and a
+message sent to our own SteamID comes back - a loopback, so the whole messaging path runs over
+Steam's real network without a second account.
+
+Four things the binding got wrong, all of them ways to produce a **plausible-looking wrong
+answer**, which is why the real library was needed to find them:
+
+* **The lobby id is at offset 8** in `LobbyCreated { int32 result; u64 lobby; }` on 64-bit, not
+  4 - a uint64 after an int32 is 8-byte aligned. The reference is 32-bit, where it is at 4, so
+  copying its offset gives a number that looks like a lobby id and is not one, and every later
+  call with it fails.
+* **A call's result does not arrive in the callback parameter.** The parameter of
+  CB_CALL_COMPLETED is an `APICallCompleted`; the result has to be fetched with
+  `GetAPICallResult`, and the first attempt can answer "not yet" while Steam is still fetching
+  the app's config. The reference asks once and drops the result; asking again is what makes it
+  work.
+* **The `result` field has to be checked** - a failed call still carries a buffer.
+* The `CallbackMsg` struct was declared twice, so the argument type and the argument were
+  different classes.
+
+The library comes from the Steamworks.NET standalone release and both files match the SHA-256
+the playbook pins. It is **not** committed - it is Valve's.
 
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
