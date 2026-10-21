@@ -140,6 +140,9 @@ a client can prove or disprove divergence.
     cells it is missing and, behind a flag, removes the land the host does not have. Both
     function names (`PlaceLandfill`, `RemoveLandfill`) and the whole shape come from
     PencilPal, the one mod known to run in this build — see `NOTES.md`.
+    **Verified live 2026-10-21:** the game placed the cell the host sent it, and the
+    self-check found no cell where the call did not take — so `PlaceLandfill(x, y)` takes
+    absolute coordinates and the land sync works as designed.
   - **M3.2 the world snapshot — the buildings.** ✅ code written 2026-10-21 (packet 18
     `SNAP_STRUCT`): the host sends its structures as (position, **database id**), and the
     client adopts or builds each one. There is **no call that lists the structures in the

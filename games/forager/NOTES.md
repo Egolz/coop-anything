@@ -575,6 +575,52 @@ places, the same terrain. Three consequences, all of them worth having:
 A note on the method: this was found by **reading the owner's saves**, not by guessing.
 They are read-only, and the comparison is a decompress and a byte diff.
 
+### The land sync works: `PlaceLandfill(x, y)` takes absolute coordinates (2026-10-21)
+
+**The whole land snapshot rested on one question** - does the game's own land function
+take the cell's absolute coordinates, or an offset from the player? - and the only
+evidence had been the reference mod's use of the same call. The game has now answered it:
+
+```
+-> SNAP_LAND 2 cells at 696,648 (under the player) and 8,8 (the map corner)
+<- DEBUG Co-op: land snapshot applied - 1 cells placed, 0 removed.
+```
+
+One cell was placed - the map corner, which is water on any island this size - and the
+self-check (the cell is asked about again right after the call) found **no cell where the
+call did not take**. So the coordinates are absolute ✓ and the land sync works as designed.
+
+**How the question was answered cheaply:** the mock peer sent a second land cell at the
+**far corner of the map**, which is water on any island this size. The client's apply path
+then called the game's function for real, and the snapshot's own self-check said whether
+it took. No keypress, no separate probe, and the path that matters in production is the
+one that was tested.
+
+**And the "an item fell out of a block" mystery, twice:** the game's own structure
+creation **clears the ground the structure stands on**. The mock asked for a furnace at
+the player's feet, the client's world had a rock under it, the rock broke and dropped its
+ten stones (`item1 ... x10 @688,640`). The owner saw it on every connect and thought the
+peer had broken something - the peer had, but only by asking for a building in the middle
+of the island. The same happens with the land placement: it clears what is on the cell.
+
+Two consequences for the design:
+
+* a structure that arrives from the host can **destroy the client's rock** under it, and
+  the client then gets a **refund the host already got** - a small divergence;
+* the mock now asks for its furnace at the map corner, on the tile the land snapshot just
+  made, where nothing stands.
+
+**Two lessons from the same session:**
+
+* GameMaker does **not** convert types in a comparison: `string(n) > 0` is not false, it
+  is a hard runtime error ("Can't apply > to string and number") that kills the script on
+  that line. The compiler does not catch it and the symbol table cannot - it is a type
+  question and GML is dynamically typed. The checker grew a lint for the shape of it.
+* **F4 did not reach the mod** in the live run (no report, no freeze, the game alive) even
+  though the other F-keys (F3, F5-F12) are proven to work live. F2 works. When a hotkey
+  does nothing, the first question is whether the key reached the mod at all - not what
+  the mod did with it.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
