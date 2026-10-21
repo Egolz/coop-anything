@@ -822,7 +822,7 @@ name can sit in the string table and still not be addressable. The chain then fe
 `sprPlayerWalk` (id 1, six frames) - so a **standing** peer was drawn from the **walk** sprite, and
 the walk sprite's frames alternate legs, which is what "only the left leg" looks like.
 
-### The idle body IS `sprPlayerIdle`, asset id **0** - and the bob runs at the *drawn* rate (2026-10-22, VERIFIED LIVE)
+### The idle body IS `sprPlayerIdle`, asset id **0** - and the bob runs at the *measured index* rate (2026-10-22, VERIFIED LIVE)
 
 This is the section that took **three rounds** to get right, and the two wrong versions are kept
 because the way they went wrong is the reusable part.
@@ -882,42 +882,66 @@ cannot see it. (Note also that the old belief "sprite 0 cannot be drawn" is **wr
 that is a legacy GameMaker rule; `sprite_exists(0)` is true and `objPlayer` is drawn from
 `sprite_index 0`.)
 
-**The rate, and the 4x disagreement that is now settled rather than averaged.** Two numbers exist:
+**The rate, and the 4x disagreement - settled by the owner's eye, twice.** Two numbers exist:
 
 | source | value | per ms | 6-frame cycle |
 |---|---|---|---|
-| `objPlayer.image_speed` (the **drawn** rate) | 0.60 /step | **0.036** | **0.17 s** |
 | the wire index's rise | +0.45/packet = 0.15 /step | **0.009** | **0.67 s** |
+| `objPlayer.image_speed` | 0.60 /step | **0.036** | 0.17 s |
 
-**Four times apart.** Round 2 picked the index on the reasoning that it is "the game's clock". The
-tie-breaker is **what the eye sees**: the game draws `objPlayer` from `sprite_index 0` advanced by its
-**instance** `image_speed`, and that is **0.60**. So:
+**Four times apart, and the first answer was wrong.** Round 3 first chose `image_speed`, reasoning
+that "the game advances the instance by it, so it is what the eye sees". The owner:
 
-* **protocol 10** carries `u16 image_speed` (hundredths) in POS, right after the frame;
-* the puppet's bob runs at the peer's own drawn rate, with the measured **0.009/ms** index rise as
-  the fallback - and the mock sends `image_speed=0.6` too, or the puppet would sit on the fallback
-  while every test still passed (the same trap the frame field had already set once).
+> now the mock bobs its head too fast
 
-`tools/test_idle_bob.py` asserts: sprite 0 is a valid answer on all three paths, the drawn rate is
-exactly **4x** the index rise, the cycle follows the sent `image_speed`, and the fallback is the
-measured 0.67 s.
+So `image_speed` does **not** describe the drawing. Both `sprite_get_speed` (0 for every player
+sprite) and `objPlayer.image_speed` (0.60) are answers to *"what rate is this drawn at"* that **fail to
+describe it**; the number that does is the one measured directly off the movement - the index's rise,
+**0.009 units/ms, a 0.67 s cycle**.
+
+**The current code uses that, and only that** (protocol 11): the peer's measured index rise
+(`coopPeerStepRate`), with the measured `0.009/ms` as the fallback - one rate, not two that disagree.
+Protocol 10's `image_speed` wire field was **removed again in 11**, because a number that does not
+describe the drawing is *worse than no number*: it silently overrides a measurement that does.
+
+**So rounds 2-4 are not in conflict, and that is the real finding.** Every one of them was needed:
+
+| round | what it fixed | what it got wrong |
+|---|---|---|
+| 1 | nothing (overlay as body) | both the sprite and the rate |
+| 2 | **overlays are not bodies** (stands) | concluded *no idle body exists* |
+| 3 | **the idle body is sprite 0** (stands) | chose `image_speed` for the rate |
+| 4 | **the rate is the index rise** | - |
+
+The two working halves - **draw sprite 0** and **run at the measured index rate** - were each
+discovered in a different round, and each round applied one while inferring the other from a single,
+**correct but incomplete** observation. The lesson is narrower than "we keep getting this wrong": *a
+fix verified only against the symptom it targeted can leave the other half wrong, and only the next
+report shows it.*
+
+`tools/test_idle_bob.py` asserts: sprite 0 is a valid answer on all three paths, the **index rate is
+used** and `image_speed` loses by exactly **4x**, there is now one rate in the code, and the fallback
+is the measured 0.67 s.
 
 **Finding: `sprite_get_speed` is 0 for every player sprite, and 0 does not mean "not animated".** In
 GameMaker a sprite speed of `0` means *"use the room's default"*. Round 1 read it as a real rate, fell
 through to a made-up `0.006 units/ms`, and produced a **1.00 s** cycle against the player's **0.67 s** -
-the reported "twice as slow", honestly **1.5x**. The real rate is the **instance's**, not the asset's.
+the reported "twice as slow", honestly **1.5x**.
 
-**The lessons, all four earned live.**
+**The lessons, all earned live.**
 
 * **`asset_get_index` cannot tell "asset 0" from "not found", so `> 0` silently discards the first
   sprite in the game.** Id 0 being a *player* sprite is what made this expensive: the one name whose
   absence mattered was the one name the check could never see. And because the guard appeared in
   **three places**, fixing one did not fix the symptom - a class of bug, not a typo.
+* **Two different calls both "answered" the drawn speed and both were wrong** - `sprite_get_speed` and
+  `objPlayer.image_speed`. *When several sources claim to measure the same thing and the eye disagrees,
+  the source that survives is the one measured from the thing itself* (the movement), not the one that
+  merely sounds most authoritative.
 * **A probe answers the question the same round raised, and it is cheap** - `sprite_get_name(0)` was
-  one line, and it reversed the round-2 conclusion outright. A round should not close a question it
-  has not asked the game.
+  one line, and it reversed the round-2 conclusion outright.
 * *A guess with the right shape and the wrong number still reads as a bug.* The idle clock was
-  animated, wrapped and interpolated correctly - and was 1.5x too slow.
+  animated, wrapped and interpolated correctly - and was 1.5x too slow, then 4x too fast.
 * **Half of a wrong conclusion can be right.** The overlays-not-bodies finding survived the reversal
   intact; only the "therefore no idle body" step was wrong. Reversing a conclusion does not mean
   discarding its evidence.
