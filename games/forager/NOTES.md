@@ -822,7 +822,7 @@ name can sit in the string table and still not be addressable. The chain then fe
 `sprPlayerWalk` (id 1, six frames) - so a **standing** peer was drawn from the **walk** sprite, and
 the walk sprite's frames alternate legs, which is what "only the left leg" looks like.
 
-### The idle body IS `sprPlayerIdle`, asset id **0** - and the bob runs at the *measured index* rate (2026-10-22, VERIFIED LIVE)
+### The idle body IS `sprPlayerIdle`, asset id **0** - and the bob is a **0.5 s period** (~2/s) (2026-10-22, VERIFIED LIVE)
 
 This is the section that took **three rounds** to get right, and the two wrong versions are kept
 because the way they went wrong is the reusable part.
@@ -882,46 +882,63 @@ cannot see it. (Note also that the old belief "sprite 0 cannot be drawn" is **wr
 that is a legacy GameMaker rule; `sprite_exists(0)` is true and `objPlayer` is drawn from
 `sprite_index 0`.)
 
-**The rate, and the 4x disagreement - settled by the owner's eye, twice.** Two numbers exist:
+**The rate: four rounds of calibration, and the finding is that a "bob" is a CYCLE, not a frame.**
+Two numbers were available and both were wrong, and **the owner's eye was the only working
+instrument**:
 
-| source | value | per ms | 6-frame cycle |
-|---|---|---|---|
-| the wire index's rise | +0.45/packet = 0.15 /step | **0.009** | **0.67 s** |
-| `objPlayer.image_speed` | 0.60 /step | **0.036** | 0.17 s |
+| round | rate in the code | cycle | bobs/s | owner's verdict |
+|---|---|---|---|---|
+| 3 | `objPlayer.image_speed` 0.60 /step | 0.17 s | ~5.9 | *"too fast"* |
+| 4 | the wire index's rise, +0.45/packet | 0.67 s | ~1.5 | *"too slow, ~1.5/s"* |
+| 5 | **a 0.5 s period** | **0.50 s** | **~2.0** | asked directly: *"~2/s"* |
 
-**Four times apart, and the first answer was wrong.** Round 3 first chose `image_speed`, reasoning
-that "the game advances the instance by it, so it is what the eye sees". The owner:
+**Every report was a correct measurement, and that is the point.** A 0.17 s cycle really is ~5.9
+bobs/s and a 0.67 s cycle really is ~1.5 bobs/s - so the owner was measuring accurately each time and
+**the code was the thing moving**. Round 3 then round 4 looks like flip-flopping; it was calibration,
+and each answer narrowed the range.
 
-> now the mock bobs its head too fast
+**What the arithmetic had been missing: a full bob is a whole cycle, not one sprite frame.** All the
+earlier rates were computed as if a cycle were the sprite's six frames, and two live facts never fit
+that assumption:
 
-So `image_speed` does **not** describe the drawing. Both `sprite_get_speed` (0 for every player
-sprite) and `objPlayer.image_speed` (0.60) are answers to *"what rate is this drawn at"* that **fail to
-describe it**; the number that does is the one measured directly off the movement - the index's rise,
-**0.009 units/ms, a 0.67 s cycle**.
+* `image_speed 0.60` is 36 frames/s, and 36 / 2 cycles/s = **18 frames per cycle** - not 6;
+* `objPlayer.image_index` **stops dead while standing** - live, `imgidx 4.20` across five probes
+  spanning nearly a minute. A counter that freezes cannot be the thing that bobs.
 
-**The current code uses that, and only that** (protocol 11): the peer's measured index rise
-(`coopPeerStepRate`), with the measured `0.009/ms` as the fallback - one rate, not two that disagree.
-Protocol 10's `image_speed` wire field was **removed again in 11**, because a number that does not
-describe the drawing is *worse than no number*: it silently overrides a measurement that does.
+**The current code (M5k4) is driven by the period, not a rate.** `_COOP_IDLE_PERIOD_S = 0.5`, and the
+sprite's own frame count does the conversion (`frames / period`), so the single tunable number is
+expressed in the unit the report arrives in - **bobs per second** - and it survives a change of frame
+count or build. One number to tune, in the units the owner can see, instead of a rate to re-derive.
+A peer that reports its own rate (`coopPeerStepRate`) still drives the puppet from that; the period is
+the fallback and the default. Protocol 10's `image_speed` wire field stayed **removed in 11**: a number
+that does not describe the drawing is *worse than no number*, because it silently overrides a
+measurement that does.
 
-**So rounds 2-4 are not in conflict, and that is the real finding.** Every one of them was needed:
+**The probe now measures units per GAME STEP** (`M5k3f`, on the `idx probe` line). Every earlier rate
+round measured the index against **wall-clock time** or against **packet distance**, and the results
+agreed with neither the eye nor each other. The index is the game's own frame counter, so the honest
+unit is units per **step** - and standing is summed **separately** from walking, because the index
+freezes while standing and one average over both states would describe neither. The line ends
+`| stand <u/step> over <st> | walk <u/step> over <st>`.
 
-| round | what it fixed | what it got wrong |
+**Rounds 2-5 compared, all four needed:**
+
+| round | what it fixed (still stands) | what it got wrong |
 |---|---|---|
-| 1 | nothing (overlay as body) | both the sprite and the rate |
-| 2 | **overlays are not bodies** (stands) | concluded *no idle body exists* |
-| 3 | **the idle body is sprite 0** (stands) | chose `image_speed` for the rate |
-| 4 | **the rate is the index rise** | - |
+| 1 | nothing (an overlay drawn as a body) | both the sprite and the rate |
+| 2 | **overlays are not bodies** | concluded *no idle body exists* |
+| 3 | **the idle body is sprite 0** | chose `image_speed` for the rate |
+| 4 | **`image_speed` does not describe the drawing** | chose a rate where a period was needed |
+| 5 | **the period is 0.5 s** | - |
 
-The two working halves - **draw sprite 0** and **run at the measured index rate** - were each
-discovered in a different round, and each round applied one while inferring the other from a single,
-**correct but incomplete** observation. The lesson is narrower than "we keep getting this wrong": *a
-fix verified only against the symptom it targeted can leave the other half wrong, and only the next
-report shows it.*
+The working halves - **draw sprite 0** and **the right clock** - were each discovered in a different
+round, and each round applied one while inferring the other from a single, **correct but incomplete**
+observation. The lesson is narrower than "we keep getting this wrong": *a fix verified only against the
+symptom it targeted can leave the other half wrong, and only the next report shows it.*
 
-`tools/test_idle_bob.py` asserts: sprite 0 is a valid answer on all three paths, the **index rate is
-used** and `image_speed` loses by exactly **4x**, there is now one rate in the code, and the fallback
-is the measured 0.67 s.
+`tools/test_idle_bob.py` asserts: sprite 0 is a valid answer on all three paths, the 0.5 s period is the
+source and the rate is **derived** from it and the frame count, ~2 bobs/s is what comes out, the two
+rejected reports **bracket** it (1.5 < 2.0 < 5.9), and the period survives a change of frame count.
 
 **Finding: `sprite_get_speed` is 0 for every player sprite, and 0 does not mean "not animated".** In
 GameMaker a sprite speed of `0` means *"use the room's default"*. Round 1 read it as a real rate, fell
@@ -934,15 +951,24 @@ the reported "twice as slow", honestly **1.5x**.
   sprite in the game.** Id 0 being a *player* sprite is what made this expensive: the one name whose
   absence mattered was the one name the check could never see. And because the guard appeared in
   **three places**, fixing one did not fix the symptom - a class of bug, not a typo.
-* **Two different calls both "answered" the drawn speed and both were wrong** - `sprite_get_speed` and
-  `objPlayer.image_speed`. *When several sources claim to measure the same thing and the eye disagrees,
-  the source that survives is the one measured from the thing itself* (the movement), not the one that
-  merely sounds most authoritative.
+* **Tuning a visible rate: take the number from the person who can see it, in the unit they can see
+  it, and make the code derive from it.** Four rounds were lost to converting a period into a rate
+  that was then re-converted wrongly. `_COOP_IDLE_PERIOD_S = 0.5` with `frames / period` puts the one
+  tunable number in the same unit as the report - *bobs per second* - where a wrong value reads as
+  wrong instead of as a plausible-looking arithmetic slip.
+* **A "bob" is a cycle, not a frame.** Every early rate was computed as though the sprite's six frames
+  were one bob. The tell was there the whole time: 36 frames/s against ~2 bobs/s is 18 frames per
+  cycle, which does not match a 6-frame sprite, and the counter those rates were read from
+  **freezes** while standing.
+* **When several sources claim to measure the same thing and the eye disagrees, distrust all of
+  them** - `sprite_get_speed` (0 for every player sprite) and `objPlayer.image_speed` (0.60) were
+  *both* wrong about the drawn rate, and the only number that matched was measured off the visible
+  event. *Measure the thing, in the unit it happens in.*
 * **A probe answers the question the same round raised, and it is cheap** - `sprite_get_name(0)` was
   one line, and it reversed the round-2 conclusion outright.
 * *A guess with the right shape and the wrong number still reads as a bug.* The idle clock was
   animated, wrapped and interpolated correctly - and was 1.5x too slow, then 4x too fast.
-* **Half of a wrong conclusion can be right.** The overlays-not-bodies finding survived the reversal
+* **Half of a wrong conclusion can be right.** The overlays-not-bodies finding survived two reversals
   intact; only the "therefore no idle body" step was wrong. Reversing a conclusion does not mean
   discarding its evidence.
 
