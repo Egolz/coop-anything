@@ -822,17 +822,23 @@ name can sit in the string table and still not be addressable. The chain then fe
 `sprPlayerWalk` (id 1, six frames) - so a **standing** peer was drawn from the **walk** sprite, and
 the walk sprite's frames alternate legs, which is what "only the left leg" looks like.
 
-### The `...Idle` names are cosmetic OVERLAYS, not bodies - and the animation rate is the index's own rise (2026-10-22, VERIFIED LIVE)
+### The idle body IS `sprPlayerIdle`, asset id **0** - and the bob runs at the *drawn* rate (2026-10-22, VERIFIED LIVE)
 
-The owner's request, then the owner's report of what the first attempt did:
+This is the section that took **three rounds** to get right, and the two wrong versions are kept
+because the way they went wrong is the reusable part.
+
+**Round 1.** The owner asked:
 
 > make the idle bob of the head and backpack while standing still. Find that animation and pick up its
 > speed.
->
+
+It drew `sprPlayerGlassesIdle` for a standing peer and read the rate from `sprite_get_speed`. The
+owner:
+
 > when I stand still I only see the glasses, the name, and the tree the mock holds; when I walk the
 > mock is visible and without glasses. The bob is there but it is twice as slow as the player's model.
 
-**The asset ids, live, and they are the whole answer:**
+**Round 2.** The ids came back and were read as "there is no idle body":
 
 | name | id | what it is |
 |---|---|---|
@@ -842,52 +848,79 @@ The owner's request, then the owner's report of what the first attempt did:
 | `sprPlayerPinkBowIdle` | 4 | an **overlay**: a bow only |
 | `sprPlayerPinkBowWalk` | 5 | an overlay |
 | `sprBackpackIdle` | 439 | an **overlay**: a backpack only |
-| `sprPlayerIdle` | **NOT FOUND** | - |
+| `sprPlayerIdle` | **NOT FOUND** | - (by name) |
 | `sprPlayerIdleNew` | **NOT FOUND** | - |
 | `sprBodyIdle` | **NOT FOUND** | - |
 
-(Every one reports `sprite_get_speed 0`, `sprite_get_speed_type 0` - see below for why that number is
-useless.)
+The overlay half of that **is correct and still stands**: `sprPlayerGlassesIdle` drawn as a body is an
+accessory with no body under it, exactly the owner's "only the glasses". The overlay names are out of
+the body/idle candidate lists for good.
 
-**Finding 1: `sprPlayerIdle` does not exist, and the `...Idle` names are cosmetics, not bodies.** The
-Forager modding docs describe the player as four stacked cosmetic layers (*Wing -> Backpacks -> Body
--> Head*), each created with its own `sprXxxIdle` / `sprXxxWalk` pair. What the ids show is that
-**only the walk pair of the base body exists**; every `...Idle` in the table belongs to an
-**accessory**. The first attempt walked a candidate list in order and stopped at the first hit -
-`sprPlayerGlassesIdle` - and drew an accessory with **no body under it**, which is precisely the
-owner's "only the glasses, the name, and the tree".
+The wrong half was concluding **no idle body exists**. Round 2's own probe had already raised the
+better question and printed the answer in the next round:
 
-**Finding 2: the ids are sequential from 1, and that is what settles `sprPlayerIdle`.** `sprPlayerWalk`
-is id **1**, so a plain `sprPlayerIdle` beside it would be id **0** - and `asset_get_index("sprPlayerIdle")`
-returns **0** both for *"asset number 0"* and for *"no such name"*. **The two answers are
-indistinguishable through that call**, which is why every check in this codebase is `> 0` and why id
-0 was never examined. (A sprite at id 0 cannot be drawn anyway: `draw_sprite_ext(0, ...)` is
-GameMaker's "no sprite".)
+    sprite id 0 is 'sprPlayerIdle'          <- sprite_get_name(0)
+    sprite id 1 is 'sprPlayerWalk'
+    objPlayer sprite_index -> 0  imgspd 0.60
 
-**So there is no separate idle body, and the standing pose is the walk sprite held on its standing
-frame.** That also matches the request as written - the owner asked about the **head and backpack**,
-not the legs, because the bob lives in the overlay layers.
+**Round 3, correct: `sprPlayerIdle` is asset id 0.** The plain body idle **does** exist; it is
+**unreachable by name**, because `asset_get_index` answers an unknown name with **0** and 0 is also
+this sprite's own index - the two answers are indistinguishable through that call. Every check in the
+codebase is `> 0` for exactly that reason, and `> 0` is the one test that cannot see this sprite. A
+standing peer got **nothing** drawn.
 
-**Finding 3: `sprite_get_speed` is 0 for every player sprite, and 0 does not mean "not animated".**
-In GameMaker a sprite speed of `0` means *"use the room's default"*, so the first version's reading
-of it as a real rate was wrong from the start; it fell through to a made-up `0.006 units/ms` and
-produced a **1.00 s** six-frame cycle against the player's **0.67 s**. That is the reported
-"twice as slow" - the honest number is **1.5x**, and the test asserts 1.5x, not 2x.
+**Three separate `> 0` guards each deleted the bob on their own**, which is why Round 2's fix looked
+complete and was not:
 
-**The rate that is real is the one already on the wire.** `coopPeerStepRate` is the index's rise,
-measured between two packets - and the index is the game's **animation clock**, the free-running
-timer M5j caught and stopped calling a walk. Live it climbs **+0.45 per packet at 20 packets/s =
-9 units/s = 0.009 units/ms**, a six-frame cycle in **0.67 s**, and it keeps climbing while the player
-stands still (which is how the timer was caught in the first place). That is the rate to use, with
-that measured constant as the fallback - not a number picked to look right.
+* `CoopResolveIdleSprite` / `CoopResolveBodySprite` did not treat index 0 as a hit;
+* the draw call `if (_spr > 0) draw_sprite_ext(...)` drew nothing while standing;
+* the frame-count clamp and the height/yoffset reads skipped sprite 0 as well.
 
-**Two lessons, both earned twice.**
+All now test `>= 0`, and the resolvers ask for the idle **by identity first**
+(`sprite_exists(0) && sprite_get_name(0) == "sprPlayerIdle"`), because the name lookup provably
+cannot see it. (Note also that the old belief "sprite 0 cannot be drawn" is **wrong for this build** -
+that is a legacy GameMaker rule; `sprite_exists(0)` is true and `objPlayer` is drawn from
+`sprite_index 0`.)
+
+**The rate, and the 4x disagreement that is now settled rather than averaged.** Two numbers exist:
+
+| source | value | per ms | 6-frame cycle |
+|---|---|---|---|
+| `objPlayer.image_speed` (the **drawn** rate) | 0.60 /step | **0.036** | **0.17 s** |
+| the wire index's rise | +0.45/packet = 0.15 /step | **0.009** | **0.67 s** |
+
+**Four times apart.** Round 2 picked the index on the reasoning that it is "the game's clock". The
+tie-breaker is **what the eye sees**: the game draws `objPlayer` from `sprite_index 0` advanced by its
+**instance** `image_speed`, and that is **0.60**. So:
+
+* **protocol 10** carries `u16 image_speed` (hundredths) in POS, right after the frame;
+* the puppet's bob runs at the peer's own drawn rate, with the measured **0.009/ms** index rise as
+  the fallback - and the mock sends `image_speed=0.6` too, or the puppet would sit on the fallback
+  while every test still passed (the same trap the frame field had already set once).
+
+`tools/test_idle_bob.py` asserts: sprite 0 is a valid answer on all three paths, the drawn rate is
+exactly **4x** the index rise, the cycle follows the sent `image_speed`, and the fallback is the
+measured 0.67 s.
+
+**Finding: `sprite_get_speed` is 0 for every player sprite, and 0 does not mean "not animated".** In
+GameMaker a sprite speed of `0` means *"use the room's default"*. Round 1 read it as a real rate, fell
+through to a made-up `0.006 units/ms`, and produced a **1.00 s** cycle against the player's **0.67 s** -
+the reported "twice as slow", honestly **1.5x**. The real rate is the **instance's**, not the asset's.
+
+**The lessons, all four earned live.**
 
 * **`asset_get_index` cannot tell "asset 0" from "not found", so `> 0` silently discards the first
   sprite in the game.** Id 0 being a *player* sprite is what made this expensive: the one name whose
-  absence mattered was the one name the check could never see.
+  absence mattered was the one name the check could never see. And because the guard appeared in
+  **three places**, fixing one did not fix the symptom - a class of bug, not a typo.
+* **A probe answers the question the same round raised, and it is cheap** - `sprite_get_name(0)` was
+  one line, and it reversed the round-2 conclusion outright. A round should not close a question it
+  has not asked the game.
 * *A guess with the right shape and the wrong number still reads as a bug.* The idle clock was
-  animated, wrapped and interpolated correctly - and was 1.5x too slow, which is what the owner saw.
+  animated, wrapped and interpolated correctly - and was 1.5x too slow.
+* **Half of a wrong conclusion can be right.** The overlays-not-bodies finding survived the reversal
+  intact; only the "therefore no idle body" step was wrong. Reversing a conclusion does not mean
+  discarding its evidence.
 
 Also recorded: two `data.win` SPRT/STRG parsers were written and **both were wrong** (the STRG entry
 list is not `(offset, length)` pairs; the offsets came out as 2,053,731,167, and slicing that from a
@@ -895,7 +928,7 @@ list is not `(offset, length)` pairs; the offsets came out as 2,053,731,167, and
 an asset is**, and one probe line asks it. Every function used was confirmed present in the build by
 name-count first, because an unknown function is a **compile** error that kills the whole mod.
 
-And the same round's quieter lesson: two comment blocks in the draw handler still said `image_index`
+And the round's quieter lesson, again: two comment blocks in the draw handler still said `image_index`
 **is** the frame at **4.76 px** per unit, directly above code that contradicted both. They were
 deleted. *A comment that disagrees with the code next to it is how the next wrong guess gets written*
 - this file has now had exactly that happen twice.
