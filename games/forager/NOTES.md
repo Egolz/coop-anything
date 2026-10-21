@@ -621,6 +621,32 @@ Two consequences for the design:
   does nothing, the first question is whether the key reached the mod at all - not what
   the mod did with it.
 
+### The game's text alignment is not what the manual says (2026-10-21)
+
+**A mod that draws text changes the game's text too.** The owner noticed that the
+character's own speech - the line over its head - sat **a little to the right** whenever
+the mod was loaded.
+
+The chain, and every step of it is a fact about the game rather than about the mod:
+
+* the game draws that line **centred**;
+* it does **not** set the alignment for it - the text takes the alignment left over by
+  the frame's own drawing, so the alignment at the end of the frame is `fa_center`;
+* a mod that centres its own label and then puts back `fa_left` - which is what the
+  manual calls the default, and what the reference mod does in its **GUI** file - turns
+  the game's centred line into a left-aligned one;
+* **a left-aligned line at the same anchor starts half a text further right**, which is
+  exactly what "съехал вправо" looks like.
+
+So the mod puts back `fa_center`.
+
+**The getter exists in the symbol table but that is not the same as the loader knowing
+it.** `draw_get_halign` is in `data.win`, and saving the value would be the textbook fix
+- but `data.win` also lists `ini_open`, which the loader refuses with "not function or
+script", and **a name the loader does not know fails the whole COMPILE**, which means the
+mod stops loading at all. The restore-to-`fa_center` version cannot fail to load, and the
+getter is the right answer only after it has been proven on a live COMPILE.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
