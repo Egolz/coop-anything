@@ -721,13 +721,37 @@ So, measured:
 | the roll is `angle` (a spin) | `angle` is always 0; the roll is the **body frame counter** |
 | `image_index` is an integer frame counter | it is a **timer**: `image_index * 6` is the game frame, it advances ~0.15 per frame, and it cycles about every 6 |
 
-**What that cost, and what fixed it.** The mod sent `floor(image_index)` in a `u8` - nine
-tenths of the information thrown away - and ran a **second, local animation cycle** on top of
-the peer's. The owner saw exactly that: "dust appears under the mock but it is not animated",
-and before it a six-step stutter. Both are gone once the frame travels as a **fraction**
-(hundredths, `u16`) and the puppet is drawn at the peer's interpolated frame, carried between
-packets at a rate **measured from the packets themselves** - and the roll then comes for free,
-because the roll *is* that counter.
+**What that cost, and what fixed it - in three tries, each one measured.** The first sent
+`floor(image_index)` in a `u8` (nine tenths of the information thrown away). The second sent
+the fraction and ran a **local twelve-frame cycle** with **interpolation** on top. The owner's
+reports name each failure: "a six-step stutter", then "the puppet's walk animation is lagging".
+
+The wire log finally gave the scaling, and it is exact:
+
+    pos 721,607 ... frame 5.85 -> 0.00 -> 0.15        (the index is the game's own timer)
+    15 px walked, index +3.15                          -> one step per ~5 px
+    PLAYER_WALK_SPEED 90 / SPAWN_ANIM_SPEED 4 = 22.5  -> 4 px per animation frame
+
+Both near 5 **because the engine drives the frame and the walk off the same speed constant** -
+the frame *is* the walk, counted in steps. And the same log shows the cycle's length: the
+index runs `0.00 … 5.85` before wrapping, so the cycle is **six** frames, not twelve. The
+player covers six steps (about 34 px) and rolls *after* that.
+
+| what the code did | what the owner saw | why |
+|---|---|---|
+| sent `floor(image_index)` in a byte | six-step stutter | nine tenths of a timer thrown away |
+| a **twelve**-frame local cycle | "the walk animation is lagging" | the real cycle is **six** - the puppet walked at half rate |
+| **interpolated** the frame between packets | lag | interpolation carries it a packet behind the player |
+
+The fix is the game's own number and nothing else: the frame travels as **`image_index × 100`
+in a `u16`** (protocol 9) and is drawn as **`floor(index / 2)`** - because the walk is one
+sprite step per **two** ticks of that timer, `PLAYER_WALK_SPEED = SPAWN_ANIM_SPEED × 2`. No
+local cycle, no interpolation.
+
+**The roll** is then the index being **reset to 0** from a real value, which the same log shows
+(`5.85 → 0.00`). That reset is the only mark of a roll the wire carries, so the puppet spins
+on it for the roll's own quarter-second. It is **not** `angle`, which never leaves zero.
+
 
 `frame 2` appearing twice in two POS lines (7 px apart, 20 packets/s) is what the earlier
 round concluded "the game holds a walk frame for ~6 frames" from. That reading was not wrong
@@ -747,21 +771,35 @@ which names resolve. **A "not found" that is 0 and passes a `>= 0` check is the 
 a silent failure** - worth a rule of its own: *when a lookup has a sentinel value, assert on
 the sentinel, not on "not negative".*
 
-### The mob: watch by what an object *carries*, not by its name (2026-10-22)
+### The mob: watch what *leaves the world*, not the name and not the field (2026-10-22)
 
 `OnMobSpawn`/`OnMobDeath` are names the loader knows (PencilPal defines them), but its
 handlers are `return; // WIP` so nobody had seen them fire - and a live run of this mod's
 handlers produced nothing either, standing next to a slime.
 
-Rather than keep guessing which object is a slime, the census now decides **by the field**:
-walk the live world once, and every object that has an instance carrying `hp` is a candidate
-enemy (the player is excluded by object index). `variable_instance_exists` is the test the
-reference mod proves the loader knows. That makes the sync independent of names, of the
-island, and of whether the mob events fire.
+**Two attempts then guessed, and both were wrong.**
 
-**Still open:** the enemy's HP (the census reads and prints `hp`/`hpMax` under the field
-test, so the next run says whether they are readable), the positions of enemies once they
-chase a player, and the enemy's death when the event does not fire.
+1. **By name** (`parEnemy`, `objSlime`): reported nothing, and the `>= 0` guard on the lookup
+   accepted `asset_get_index`'s not-found answer of **0**, so the census walked object 0.
+2. **By the field `hp`**: "every object carrying `hp` is an enemy". The census finally filled,
+   and it said
+
+       enemy census watching 3 of the 4 object(s) carrying hp: { 86, 84, 85 }
+
+    - which is **two bushes and a rock**, and **no slime at all**. `hp` is what a *harvestable*
+   has (bushes 1/1, rocks 8-10/10 in this build); the slime does not carry it.
+
+**So the census stopped guessing at a field and observes a fact instead:** every killable thing,
+whatever its fields are, is **removed from the world** by the game. Each step's instance list
+(`id`, `object_index`, `x`, `y` in four parallel numeric arrays) is diffed against the previous
+step's, and whatever is missing "left the world" - a killed slime, a picked bush and a broken
+rock all come through the same door, and the object itself says which it was
+(`object_get_name`). One way of noticing something disappear, not three.
+
+**Rule worth keeping:** *a field is a guess; a diff of observed state is a measurement.* Both
+failed attempts were deductive - "a creature must carry `hp`" - and the log disproved them in
+one line.
+
 
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
