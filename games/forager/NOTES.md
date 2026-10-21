@@ -647,6 +647,58 @@ script", and **a name the loader does not know fails the whole COMPILE**, which 
 mod stops loading at all. The restore-to-`fa_center` version cannot fail to load, and the
 getter is the right answer only after it has been proven on a live COMPILE.
 
+### `data.win` is NOT the loader's function table — in either direction (2026-10-22)
+
+**This one is load-bearing, and the wrong version of it was in the code and in these notes
+until 2026-10-22.**
+
+The checker (`tools/check_gml.py`) answers "is this function in the build?" by looking for
+the name in `data.win`'s bytes, and the notes used to say that this was "the only reliable
+list". **It is not reliable in either direction:**
+
+| name | in `data.win` | in the loader | how we know |
+|---|---|---|---|
+| `ini_open` | **yes** | **no** | the game writes its own `secretSettings.ini` with it, and a live COMPILE refused it: "`ini_open` is not function or script" |
+| `variable_instance_exists` | **no** | **yes** | **PencilPal calls it** (`variable_instance_exists(id, "enemyCD")`) and PencilPal compiles in this very build |
+
+So a name missing from `data.win` is a **question, not a verdict** — and **the reference mod
+is the oracle that answers it**, because it is the one mod known to run in this build. A
+machine-readable form of that oracle: extract every function name PencilPal calls, and
+compare it with `data.win` — the names it calls that `data.win` does not have are known to
+the loader.
+
+The checker now knows the names PencilPal proves, and the code no longer claims the field
+test is impossible.
+
+### The enemies: the events exist, and nobody had ever seen them fire (2026-10-22)
+
+**The owner asked whether the second player could attack, shoot and dig.** Digging already
+works (the tree disappears on both sides). Attacking did not: the enemy the client killed
+was still standing on the host's island, still hitting them.
+
+**The reference mod has the hooks** — `OnMobSpawn(inst)` and `OnMobDeath(inst)` in
+PencilPal's `Events/OnEvent.gml` — so the loader knows the names. **But PencilPal's handlers
+are marked `return; // WIP`**, so nobody has ever learned whether the events fire. That is
+the question this mod is now answering, in the peer's log.
+
+The mob is identified the way the reference mod identifies one: **instance id**, **object
+index** and **position**. The id is the identity (two installs of the same world create the
+same instances in the same order) and the position is the fallback, because the ids do not
+always line up — a structure built on one machine and not on the other shifts every instance
+id after it.
+
+**A mob that appeared is adopted, not created**, whenever one is already standing there:
+both machines have the same island, so the client usually has a slime at that spot already,
+and creating a second one would double every slime on the island. **A mob that died is
+destroyed without the game's own cleanup** (`instance_destroy(i, false)`), because the
+game's death handling would drop the mob's loot and announce it, and that loot is this
+side's business.
+
+**Still open:** the enemy's **HP** (there is no event for it — the reference mod polls), and
+the **positions** of the enemies once they start chasing a player, which is why the
+reference mod makes its slimes harmless (`atkSpd = 999999999`) so the two copies stand in
+the same place.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
