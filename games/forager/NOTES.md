@@ -744,9 +744,12 @@ player covers six steps (about 34 px) and rolls *after* that.
 | **interpolated** the frame between packets | lag | interpolation carries it a packet behind the player |
 
 The fix is the game's own number and nothing else: the frame travels as **`image_index × 100`
-in a `u16`** (protocol 9) and is drawn as **`floor(index / 2)`** - because the walk is one
-sprite step per **two** ticks of that timer, `PLAYER_WALK_SPEED = SPAWN_ANIM_SPEED × 2`. No
-local cycle, no interpolation.
+in a `u16`** (protocol 9) and is drawn as **`floor(index)`** - the index *is* the sprite frame and
+the cycle is **six** index-units. No local cycle, no division, no interpolation.
+
+**The `/2` that was here is now removed and the claim it rested on was measured false (M5e).**
+It divided the index by two on the theory that `PLAYER_WALK_SPEED / SPAWN_ANIM_SPEED = 22.5` was
+the index's own rate; the walk then took twelve units and the owner saw **half rate**.
 
 **The roll** is then the index being **reset to 0** from a real value, which the same log shows
 (`5.85 → 0.00`). That reset is the only mark of a roll the wire carries, so the puppet spins
@@ -778,6 +781,55 @@ round concluded "the game holds a walk frame for ~6 frames" from. That reading w
 about the frame rate, and it was wrong about the field: it is a timer, so the "frames" are
 0.15 apart.
 
+### The two notes about the index disagree by a factor of 4, and the wire is the one that counts (2026-10-22, unresolved)
+
+Asked to make the puppet's walk smooth, the code was read for **every** cause of jerking rather
+than the first one found, and there are three. Two are in the mod and are fixed (M5i): the frame
+**froze** between packets and was drawn as `floor(last value)`, and the roll **froze mid-turn**
+because `_dt` was computed inside the position block, which only runs while the puppet has a gap
+to close.
+
+The third is not in the mod, and it is the biggest:
+
+    the owner's own wire log:  0.22 index-units per packet at 20 packets/s  =  4.4 units/s
+    a six-unit cycle at that rate:                                          1.36 s
+    this repo's own arithmetic (15 px -> +3.15, 4.76 px per unit):           0.32 s
+
+**4.26× apart - and `SPAWN_ANIM_SPEED` is 4.** That is exactly the coincidence this project has
+been wrong about before (the `/2` above was the same move), so it is **measured, not assumed**:
+`CoopSendPos` now emits one line every two seconds while the player moves -
+
+    idx probe: idx <index> d <growth> delta px <distance walked> rate <px per index-unit> moved 0|1
+
+- and the answer decides which is true:
+
+| `rate` comes out near | what it means |
+|---|---|
+| **4.76** | the index **is** the walk clock; the wire number is right and only the packet cadence needed fixing |
+| **19** | the index runs four times too slowly to be the walk - the puppet has been animated off the **wrong clock**, and that, not packet stepping, is why it looks wrong |
+
+The sender writes `objPlayer.image_index` raw (no division anywhere in the code), and the player's
+body is drawn from a **constant asset** with the instance's `sprite_index` at 0 - which is the
+reason to suspect the second row rather than the first: the instance may be advancing a timer for
+a sprite the player does not use.
+
+**The lesson is the same as the `/2` lesson, one round later:** two numbers in the same file
+described the same object 4× apart and neither was reconciled before code was written on top. A
+probe line costs nothing and settles it. *When two measurements of one thing disagree, measure it
+again before choosing either.*
+
+### `while` IS proven in this loader - by our own code, not by the reference mod (2026-10-22)
+
+A first pass added a checker warning against `while`/`do`, on the evidence that the reference mod
+uses `for` everywhere and has **no `while` at all** (its one is commented out). The warning then
+fired on **three `while` loops already in this mod** - the land and structure snapshot batches -
+which have run **live and verified since M3.1**. So `while` compiles and runs fine here, and the
+reference mod's silence about it was never evidence. The warning is now only about `do`, which
+nothing here has proven.
+
+*Absence in one mod is not absence in the loader* - the same mistake as "not in `data.win`, so not
+in the loader", which this project already corrected once.
+
 ### The build has a first-party enemy-spawn API, and the search for "an enemy" missed it (2026-10-22)
 
 The slime work spent three rounds trying to **find** an enemy - first by name (`parEnemy`,
@@ -793,12 +845,51 @@ plus `DustSpawn`/`DustEntityStep` (dust), `objSummonSkeleton`, `objSlimeKing`, `
 for the **verb the task actually needs** ("spawn") finds the API. Index the symbol table by what
 you want to *do*, not by what the thing *is*.
 
-**Signatures are not in `data.win`.** The loader's arity errors are exact and cheap to read, and
-a call made with the **wrong number of arguments cannot create anything** - which is what makes
-probing a spawn signature safe in a live world. The probe (`CoopProbeEnemy`, run automatically
-once per world) asks for `ModEnemySpawn`, `EnemyCreate` and `ModObjectSpawn` and reports through
-the debug channel, so the answer is readable **from outside the game** rather than from a human's
-console: the owner should not be the test harness, and a key press is not a test plan.
+**Signatures are NOT in `data.win`, and probing them by calling SHORT is fatal - this note said
+the opposite and that was wrong (corrected 2026-10-22).** The earlier text here claimed "a call
+made with the wrong number of arguments cannot create anything - which is what makes probing a
+spawn signature safe in a live world". The second half is true and beside the point: the call
+created nothing, and it also did this:
+
+    Mod failed to unit! Forager Coop/Net.gml[L1799,c1] `ModEnemySpawn` takes 4 arguments, got 0
+
+**Arity is checked at COMPILE time.** A short call is not a runtime no-op, it is a compile failure
+and **the whole mod does not load**. The loader's error message is exact, and that is worth having -
+but it costs a live COMPILE, so it is a last resort, not a probe.
+
+**Signatures come from the docs.** `EnemyCreate` and `ModEnemySpawn` are both in the official
+mirror, and reading them there is free:
+
+    EnemyBeet = EnemyCreate(undefined, "beet", EnemyType.Raider);   // -> enemy id
+    var _inst = ModEnemySpawn(x, y, depth, EnemyBeet);              // -> instance
+
+which is the whole path: `EnemyCreate(undefined, name, type)` makes a **database entry**,
+`ModEnemySpawn(x, y, depth, enemy)` puts an instance in the world - four arguments, as the loader
+said. **Live 2026-10-22, the spawn works and the id is real:** a slime was created at the player's
+own cell + 16 px and reported `ModEnemySpawn(688,672,-672,20) -> 102305`.
+
+**Enums are loader-injected too, and their members are also checked at compile time.** `EnemyType`
+and `EnemyData` are **not in `data.win`** (checked), so they cannot be found by grepping the build -
+but `EnemyType.Base` and `EnemyType.Raider` are in the docs, and the reference mod proves the
+dotted form in this build with `Item.Coin`, `Item.Count`, `StructureType.Base` and
+`BuildMenuCategory.Economic`. `EnemyType.Base` has **no behaviour of its own**; only `Raider` does.
+
+**One more thing the spawn taught, which is about the API's shape rather than signatures:**
+`ModEnemySpawn` returns an **`objModEnemy`** instance (object 25), not an `objSlime` (object 26).
+So a spawned enemy is generic, and it needs its body put on it - the owner's report is exactly
+that: "it is a slime, only the model is like the player's". `objSlime` resolving to 26 while the
+spawn returns object 25 is the whole of it.
+
+The probe (`CoopProbeEnemy`, run automatically once per world) still reports through the debug
+channel, so the answer is readable **from outside the game** rather than from a human's console:
+the owner should not be the test harness, and a key press is not a test plan.
+
+**The class of bug is caught offline now.** `check_gml.py` records the arities it has learned
+(`BUILTIN_ARITIES`, including the whole modding API) and warns about a call to an API function
+whose arity is not recorded; `KNOWN_ENUMS` does the same for enum members; and
+`tools/test_arity.py` feeds the checker a short call, a correct call, an unrecorded call and an
+unrecorded enum member so it cannot come back quietly. **A wrong call now costs one second, not
+one COMPILE.**
 
 ### `asset_get_index` answers a miss with **0**, and `>= 0` accepts it (2026-10-22)
 
