@@ -285,9 +285,10 @@ docs mirror does not document the drawing functions either. The **mod that runs 
 **The mock peer's two bugs, which were the mock's and not the mod's:**
 
 1. It walked a small square around the **host's live position**, so the puppet was glued to the
-   host's camera - "the mock follows the player". It now **stands still** and re-anchors only
-   when the host is more than 128 px away, which keeps "stands still" and "always visible"
-   compatible.
+   host's camera - "the mock follows the player". It then stood still and re-anchored only when
+   the host was more than 128 px away, which kept "stands still" and "always visible"
+   compatible - but it still stood on a tile of its own, and the game spawns on such a tile. It
+   now stands **exactly where the player stands**; see the section below.
 2. It sent a position **before it knew where the host was**, using a hard-coded fallback
    `(620, 620)` - an arbitrary point in the world, so the puppet could appear far away and
    only then jump to the right place. It now reports no position until the anchor exists.
@@ -423,6 +424,35 @@ There are two questions, not one:
 |---|---|---|
 | a **peer** | its own coordinates - it stands where it stands, which is not on the lattice at all | the cell it stands in |
 | a **structure** | the cell's **corner** | its whole **2x2** footprint |
+
+### The game spawns nothing on the tile a player stands on (2026-10-21, live)
+
+**The owner noticed ore and grass appearing on the mock's tile** and asked for the game to be
+unable to spawn anything there. The rule that explains it is the game's own: **nothing spawns on
+the tile a player stands on**. The mock stood on a tile of its own - 96 px to the side at first,
+then an anchor 32 px off - so it was not under that rule, and the game was free to spawn on it.
+
+The fix uses the rule instead of fighting it: **the mock stands exactly where the player
+stands**. Exactly, not a few pixels to the side - a few pixels to the side is a **different
+cell** on the world's 16 px grid, and the rule would not cover it.
+
+**This split the one occupancy test into two questions**, which is the part worth keeping:
+
+| | what has to be free |
+|---|---|
+| a **structure** | water, trees, rocks, ore nodes, buildings **and the player** - the owner's requirement is a free spot, not on a tree, a rock, an ore node, a building, water or a character |
+| a **peer** | water and **solids** only - a peer is a *drawing*, it does not push the player and the player does not push it, and the peer's cell has to be allowed to be the player's own cell, because that is the cell the game protects |
+
+Before the split, the peer test counted the player as an obstacle and pulled the peer off the
+very cell it had to be on. The cell test now takes the question as an argument
+(`CoopSolidInCell(x, y, living)`).
+
+**And a bug the split exposed:** the client looked for a **free spot** for a structure before
+asking whether it **already had** that structure. A structure's own 2x2 footprint contains the
+structure, so the spot always read as occupied, the search moved it one cell to the left, and
+the client created a **duplicate** furnace next to the one the owner had built (live,
+2026-10-21). The check for "is it already here" comes first now, and the free-spot search only
+runs for a structure this side does not have.
 
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
