@@ -822,50 +822,83 @@ name can sit in the string table and still not be addressable. The chain then fe
 `sprPlayerWalk` (id 1, six frames) - so a **standing** peer was drawn from the **walk** sprite, and
 the walk sprite's frames alternate legs, which is what "only the left leg" looks like.
 
-### The idle bob is the cosmetic layers' `Idle` sprites, played at the sprite's own speed (2026-10-22)
+### The `...Idle` names are cosmetic OVERLAYS, not bodies - and the animation rate is the index's own rise (2026-10-22, VERIFIED LIVE)
 
-The owner's next request:
+The owner's request, then the owner's report of what the first attempt did:
 
-> the mock animates slowly and freezes - fine, let's start with the idle bob of the head and backpack
-> while standing still. Find that animation and pick up its speed.
+> make the idle bob of the head and backpack while standing still. Find that animation and pick up its
+> speed.
+>
+> when I stand still I only see the glasses, the name, and the tree the mock holds; when I walk the
+> mock is visible and without glasses. The bob is there but it is twice as slow as the player's model.
 
-**What the bob is.** The Forager modding docs say the player is drawn as **four stacked cosmetic
-layers** - *Wing -> Backpacks -> Body -> Head* - and every cosmetic is created with its own pair:
+**The asset ids, live, and they are the whole answer:**
 
-    CosmeticCreate(undefined, "beet", CosmeticType.Body, sprBeetIdle, sprBeetWalk, ...)
+| name | id | what it is |
+|---|---|---|
+| `sprPlayerWalk` | **1** | the **full body**, walking |
+| `sprPlayerGlassesIdle` | 2 | an **overlay**: glasses only |
+| `sprPlayerGlassesWalk` | 3 | an overlay |
+| `sprPlayerPinkBowIdle` | 4 | an **overlay**: a bow only |
+| `sprPlayerPinkBowWalk` | 5 | an overlay |
+| `sprBackpackIdle` | 439 | an **overlay**: a backpack only |
+| `sprPlayerIdle` | **NOT FOUND** | - |
+| `sprPlayerIdleNew` | **NOT FOUND** | - |
+| `sprBodyIdle` | **NOT FOUND** | - |
 
-So **the bob is each layer's `Idle` sprite**, and an `Idle` sprite is an **animation**, not a still.
-That is the whole shape of the feature: play the idle sprite's frames while the peer stands still,
-instead of freezing on one walk-stance frame.
+(Every one reports `sprite_get_speed 0`, `sprite_get_speed_type 0` - see below for why that number is
+useless.)
 
-**The speed is the asset's, not a constant.** `sprite_get_speed` is frames-per-image (type 0) or
-images-per-frame (type 1) - the two are **inverses**, and `sprite_get_speed_type` says which - and
-the puppet advances its idle frame by `speed / 16.667` per millisecond. "Pick up its speed" has to
-mean the asset's own number, or the bob drifts from the player's.
+**Finding 1: `sprPlayerIdle` does not exist, and the `...Idle` names are cosmetics, not bodies.** The
+Forager modding docs describe the player as four stacked cosmetic layers (*Wing -> Backpacks -> Body
+-> Head*), each created with its own `sprXxxIdle` / `sprXxxWalk` pair. What the ids show is that
+**only the walk pair of the base body exists**; every `...Idle` in the table belongs to an
+**accessory**. The first attempt walked a candidate list in order and stopped at the first hit -
+`sprPlayerGlassesIdle` - and drew an accessory with **no body under it**, which is precisely the
+owner's "only the glasses, the name, and the tree".
 
-**Which names are real is asked of the game, not read out of the file.** The new asset probe prints
-id, frame count, w/h, yoffset, `sprite_get_speed` and `sprite_get_speed_type` for
-`sprPlayerIdle`, `sprPlayerIdleNew`, `sprBodyIdle`, `sprPlayerGlassesIdle`, `sprPlayerPinkBowIdle`
-and `sprBackpackIdle`, and `CoopResolveIdleSprite` walks those candidates in turn. **This is the
-answer that is still outstanding** - the live numbers from that probe decide the rate, and the code
-uses a slow fallback until they arrive.
+**Finding 2: the ids are sequential from 1, and that is what settles `sprPlayerIdle`.** `sprPlayerWalk`
+is id **1**, so a plain `sprPlayerIdle` beside it would be id **0** - and `asset_get_index("sprPlayerIdle")`
+returns **0** both for *"asset number 0"* and for *"no such name"*. **The two answers are
+indistinguishable through that call**, which is why every check in this codebase is `> 0` and why id
+0 was never examined. (A sprite at id 0 cannot be drawn anyway: `draw_sprite_ext(0, ...)` is
+GameMaker's "no sprite".)
 
-Two parsers for `data.win`'s SPRT/STRG chunks were written and **both were wrong** (the STRG entry
+**So there is no separate idle body, and the standing pose is the walk sprite held on its standing
+frame.** That also matches the request as written - the owner asked about the **head and backpack**,
+not the legs, because the bob lives in the overlay layers.
+
+**Finding 3: `sprite_get_speed` is 0 for every player sprite, and 0 does not mean "not animated".**
+In GameMaker a sprite speed of `0` means *"use the room's default"*, so the first version's reading
+of it as a real rate was wrong from the start; it fell through to a made-up `0.006 units/ms` and
+produced a **1.00 s** six-frame cycle against the player's **0.67 s**. That is the reported
+"twice as slow" - the honest number is **1.5x**, and the test asserts 1.5x, not 2x.
+
+**The rate that is real is the one already on the wire.** `coopPeerStepRate` is the index's rise,
+measured between two packets - and the index is the game's **animation clock**, the free-running
+timer M5j caught and stopped calling a walk. Live it climbs **+0.45 per packet at 20 packets/s =
+9 units/s = 0.009 units/ms**, a six-frame cycle in **0.67 s**, and it keeps climbing while the player
+stands still (which is how the timer was caught in the first place). That is the rate to use, with
+that measured constant as the fallback - not a number picked to look right.
+
+**Two lessons, both earned twice.**
+
+* **`asset_get_index` cannot tell "asset 0" from "not found", so `> 0` silently discards the first
+  sprite in the game.** Id 0 being a *player* sprite is what made this expensive: the one name whose
+  absence mattered was the one name the check could never see.
+* *A guess with the right shape and the wrong number still reads as a bug.* The idle clock was
+  animated, wrapped and interpolated correctly - and was 1.5x too slow, which is what the owner saw.
+
+Also recorded: two `data.win` SPRT/STRG parsers were written and **both were wrong** (the STRG entry
 list is not `(offset, length)` pairs; the offsets came out as 2,053,731,167, and slicing that from a
-107 MB file simply hangs). They were abandoned rather than debugged further: the game is the
-authoritative oracle for what is an asset, and one probe line asks it. `sprite_get_speed` and
-`sprite_get_speed_type` were confirmed present in the build by name-count before use, because an
-unknown function is a **compile** error that kills the whole mod.
+107 MB file hangs). Abandoned rather than debugged: **the game is the authoritative oracle for what
+an asset is**, and one probe line asks it. Every function used was confirmed present in the build by
+name-count first, because an unknown function is a **compile** error that kills the whole mod.
 
-**The lesson, and it is the same one twice in two rounds:** the repo held **two** measurements of
-the same object that disagreed by ~4x (4.76 vs 12.2 px per unit, and 0.32 s vs 1.36 s per cycle),
-and code went on top of both before either was reconciled. *When two numbers about one thing
-disagree, the answer is a probe, not an average and not a choice.*
-
-A second, quieter lesson from the same round: two comment blocks in the draw handler still said
-`image_index` **is** the frame at **4.76 px** per unit, directly above code that contradicted both.
-They were deleted. *A comment that disagrees with the code next to it is how the next wrong guess
-gets written* - this file has now had exactly that happen twice.
+And the same round's quieter lesson: two comment blocks in the draw handler still said `image_index`
+**is** the frame at **4.76 px** per unit, directly above code that contradicted both. They were
+deleted. *A comment that disagrees with the code next to it is how the next wrong guess gets written*
+- this file has now had exactly that happen twice.
 
 ### `while` IS proven in this loader - by our own code, not by the reference mod (2026-10-22)
 
