@@ -454,6 +454,25 @@ the client created a **duplicate** furnace next to the one the owner had built (
 2026-10-21). The check for "is it already here" comes first now, and the free-spot search only
 runs for a structure this side does not have.
 
+**Confirmed by the run right after the fix (live, 2026-10-21):**
+
+```
+-> MUTATION_PLACE seq=1 'печь' at 608,624 (confirming the client's request)
+<- selftest PASS: seq 1 applied, 'печь' at 608,624 (already there)
+-> MUTATION_PLACE seq=2 'печь' at 672,624 (one the client did not ask for)
+<- selftest PASS: seq 2 applied, 'печь' at 656,608 (asked for 672,624)
+```
+
+The owner's own furnace stayed **exactly** where they built it, with no duplicate, and the mock's
+unsolicited furnace - asked for at a cell that was occupied - went to the **nearest free cell**,
+one up and one over. **Nothing spawned on the mock's tile** in that run either.
+
+**The mock follows the player, and that is not a bug.** It has no body and no world of its own,
+so the only tile the game protects from spawning is the player's own tile - standing there is
+what keeps ore and grass off it. **A real peer does not do this**: it sends the position from
+its own game, so its puppet is wherever that player is standing. Worth writing down, because
+"the mock follows me" reads like a defect and is not one.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
