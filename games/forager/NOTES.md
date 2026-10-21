@@ -473,6 +473,43 @@ what keeps ore and grass off it. **A real peer does not do this**: it sends the 
 its own game, so its puppet is wherever that player is standing. Worth writing down, because
 "the mock follows me" reads like a defect and is not one.
 
+### The land sync has a working reference implementation in this very build (2026-10-21)
+
+**PencilPal is still in the owner's Steam Workshop cache** —
+`%ProgramFiles(x86)%\Steam\steamapps\workshop\content\751780\2843162754` — and it is the
+**only mod known to run in this build**, so it is the oracle for anything the API docs do not
+say. Its `Networking.gml` has the land sync, and it is worth reading in full before writing
+any of it again:
+
+- `SyncLand` walks the world's grid — `for yy = 8; yy < 1344; yy += 16`, the same for `xx` —
+  and sends one `LAND` packet per cell where `WaterCollision(xx, yy) == 0`. **The samples are
+  the cell centres** (8, 24, … 1336), which matches the grid facts above: 84 x 84 = 7056
+  cells, 1344 px across.
+- The client's side of a `LAND` packet: if the cell **is water here**, call
+  `PlaceLandfill(x, y)`; and the last packet is the marker `LAND(-99, -99)`, which runs
+  `DeleteLand` — the same walk again, calling `RemoveLandfill(x, y)` on every cell of ours
+  that is not in the host's set.
+- **Both calls are made inside `with(objPlayer)`.** That is not decoration: it is the context
+  the game's function expects, and a call outside it is not the same call.
+- The client keeps the host's set in `global.hostLand` so the diff can be made, and it
+  sets `global.land = true` around the removal so the game's own land-changed event does not
+  echo the mod's own edit back out.
+
+**Both function names are in this build's symbol table** (`PlaceLandfill`, `RemoveLandfill`
+— checked against `data.win`, not guessed), so the calls compile.
+
+What was changed here and why:
+
+| | PencilPal | this mod |
+|---|---|---|
+| wire | one packet per cell — their own TODO calls the land sync "very slow on big worlds" | chunks of 512 cells, with a generation byte and an end marker |
+| removal | always | behind a **flag**: a peer without a world would take the island away for good, and the flag is the only thing between that and a broken save |
+| the player | not handled | put back on the nearest land, because the snapshot can take the ground out from under them |
+
+The wire-layout checker (`tools/check_gml.py`) covers the new packet like every other one:
+the `buffer_write` order in the sender is compared with the `buffer_read` order in its
+`case`, and a packet that is written and never read is a failure.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.

@@ -134,6 +134,14 @@ a client can prove or disprove divergence.
     changes itself and turn them into mutations.
   - **M2.4 item counts** — gold and resource deltas.
 - **M3 — resync.** Chunked snapshot on join + checksum-based divergence recovery.
+  - **M3.1 the world snapshot — the land.** ✅ code written 2026-10-21 (protocol 6, packet
+    17 `SNAP_LAND`): the host walks the world's own 16 px grid and sends every cell that is
+    land, in chunks of 512, with a generation byte and an end marker; the client fills in the
+    cells it is missing and, behind a flag, removes the land the host does not have. Both
+    function names (`PlaceLandfill`, `RemoveLandfill`) and the whole shape come from
+    PencilPal, the one mod known to run in this build — see `NOTES.md`. The structures and
+    the resources are still missing from the snapshot, and until they are there the client's
+    world is the host's **ground** but not yet the host's **contents**.
 - **M4 — Steam relay.** Swap DirectTCP for the Spacewar relay backend; no port forwarding.
 - **M5 — automated QA.** Two scripted clients that perform fixed mutations and compare
   shared-state hashes; log PASS/FAIL.
