@@ -534,6 +534,47 @@ output never leaves the game. The mod's `DEBUG_LINE` packet is the only channel 
 reaches the peer - and it only carries what the mod explicitly sends ✗. Every important
 line now goes over it, or the harness is blind to what the game actually did.
 
+### The save's zone file is readable, and it says the island is the same in every save (2026-10-21)
+
+**`%LOCALAPPDATA%\Forager\saveData<N>\Zones\Forager.main.cin` is a container, and its payload is
+zlib-compressed.** The layout, read off the bytes:
+
+```
+"cndr"  03 00 02 00 00 00
+"KEY"   <8 bytes>   <u32 keyLen>  <keyLen bytes>
+"DAT"   <marker>   <u32 a>       <u32 compLen>  <compLen bytes of zlib>
+```
+
+The `zlib` magic `78 9c` is visible in the raw bytes, and `zlib.decompress` on that slice
+gives the zone's content: a dictionary of **instances with their variables** (`Position`,
+`Instances`, `Name`, `Sprite`, `Image`, `Sp...`).
+
+**And the important part - the decompressed zone data is byte-identical between most save
+slots:**
+
+```
+saveData1 vs saveData3..saveData12: 0 differing bytes of 569 -> IDENTICAL
+saveData2 == saveData8 (574 bytes), saveData11 is 497, saveData0 is 741
+```
+
+So **Forager's starting island is the same in every new save** - the same trees in the same
+places, the same terrain. Three consequences, all of them worth having:
+
+1. **The resource snapshot is not needed.** The trees are already in the same places on both
+   machines; the existing `RESOURCE_DESTROY` sync covers the ones that are harvested. A
+   whole feature just fell out of the requirement.
+2. **The land snapshot is not about the terrain at all** - it is about the **bought land**,
+   which is the one thing that really differs between two saves.
+3. **The client must not have its land removed.** The host's land set and the client's land
+   set are the same island plus whatever each side bought; the flag that says "drop the land
+   the host does not have" is therefore **off** for the land - the client paid for that land
+   with their own money, and taking it away is the one thing in the snapshot that cannot be
+   undone. The flag stays on for the **structures**, where the client's own buildings really
+   do have to go for the two worlds to be the same world.
+
+A note on the method: this was found by **reading the owner's saves**, not by guessing.
+They are read-only, and the comparison is a decompress and a byte diff.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
