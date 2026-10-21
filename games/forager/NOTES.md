@@ -906,16 +906,37 @@ that assumption:
 * `objPlayer.image_index` **stops dead while standing** - live, `imgidx 4.20` across five probes
   spanning nearly a minute. A counter that freezes cannot be the thing that bobs.
 
-**Round 5b: the last 10x was a `_dt` CEILING, not a rate.** With the period correctly at 0.5 s the
-owner saw a bob every **5 s** - a factor of ten, which cannot be a tuning error. The cause was
-`if (_dt > 100) _dt = 100;` in the draw handler: `_dt` is honest (measured from `current_time`) up to
-that line, but the clamp was written to stop a one-off load spike and **silently does the same thing to
-any slow draw**. A peer standing in the same room is *not* drawn at 60 Hz - the wire shows the
-180-step probe arriving every ~13 s (~14 steps/s), and a draw every ~1000 ms under a 100 ms ceiling
-runs the animation at a **tenth** of wall-clock speed. The comment above the clamp had already recorded
-the symptom without recognising the cause: the roll "froze mid-turn" - it froze because the same
-ceiling was eating its time. The ceiling is now **1000 ms**: a load spike (seconds of gap) is still
-clamped, an ordinary slow draw is not.
+**Round 5b: the `_dt` ceiling was a real tenth-speed trap - and was NOT what the owner was seeing.**
+With the period correctly at 0.5 s the owner saw a bob every **5 s**, a factor of ten, which cannot be a
+tuning error, so the draw handler's own timing was measured (M5k5) and it read:
+
+```
+draws 540   ms 9031   dt 16.72      over a ~9 s probe interval
+```
+
+i.e. the handler runs at **~60 calls/s with an honest `_dt` of 16.7 ms** - so `if (_dt > 100) _dt = 100;`
+was **never being hit**. It is a genuine latent bug (`_dt` *was* clamped for slow draws), and it is now
+raised to **1000 ms** so a load spike is still caught but an ordinary slow draw is not throttled - but
+**it was not the cause of the 5 s bob**, and the round before it had claimed it was.
+
+**Round 5c: measure the bob in the game, not by eye (M5k6).** The owner asked for exactly this - *"is
+there a way to check my own head speed directly in the game, for example with a key?"* - and that is the
+right instrument. **F3** now arms a per-step sampler that runs for 240 steps (~4 s) and counts **full
+cycles** of **both** models side by side: `objPlayer.image_index` (the player's own head) and
+`global.coopIdleFrameF` (the puppet's), reported as **bobs/s** and **units/s**. A cycle is counted when
+the counter **falls** (the index wraps, so a rise is a frame and a fall ends a cycle), and the units
+figure catches a counter that moves within a cycle but never completes one - which a cycle count alone
+reads as 0/s. The same line prints the steps/s observed, the body's frame count, the rate asked for,
+and the puppet's internals, so a bob that does not move is distinguishable from one that is not being
+advanced at all. `CoopProbeItems` moved F3 -> **F4**.
+
+**Lesson: after three rounds of "the rate is right but the motion is wrong", stop tuning and start
+measuring in the game.** Every owner report was an accurate measurement - the instrumentation was the
+missing piece, and one key press replaced an argument about numbers with two numbers.
+
+**Lesson about scope: a latent bug found while hunting another one is not the bug you are hunting.**
+Raising the `_dt` ceiling was correct and recorded as the cause; the next log showed the clamp never
+fired. *A fix that is right in itself still needs the measurement to confirm it was the cause.*
 
 **Lesson: when a rate is wrong by a whole factor, look for the multiplier before retuning the rate.**
 Four rounds were spent choosing between two numbers that were both wrong, and the ten was a `min()`.
