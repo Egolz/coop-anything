@@ -699,6 +699,70 @@ the **positions** of the enemies once they start chasing a player, which is why 
 reference mod makes its slimes harmless (`atkSpd = 999999999`) so the two copies stand in
 the same place.
 
+### The roll is NOT a spin, and `image_index` is a timer (measured, 2026-10-22)
+
+**Two beliefs were written down here and both were wrong. They were wrong because they were
+*deduced* from the assets rather than measured, and the fix is a probe, not a better guess.**
+
+The notes said Forager's roll is the player spinning and that the spin is `objPlayer.angle`.
+The reasoning was that the player's assets are only `sprPlayerIdle` / `sprPlayerWalk` (plus
+the costume variants), so a roll with no sprite of its own "must be" a rotation. **The
+mod printed its own `angle` and `image_index` while the owner rolled live, and:**
+
+* `objPlayer.angle` **never left zero**. Not once. It is the aim angle, it stays put, and
+  drawing a puppet with it is drawing a puppet with 0.
+* `objPlayer.image_index` ran **`5.85 → 0.00 → 0.15 → 0.30 …`** while rolling, and kept
+  running **while standing still**.
+
+So, measured:
+
+| belief | measurement |
+|---|---|
+| the roll is `angle` (a spin) | `angle` is always 0; the roll is the **body frame counter** |
+| `image_index` is an integer frame counter | it is a **timer**: `image_index * 6` is the game frame, it advances ~0.15 per frame, and it cycles about every 6 |
+
+**What that cost, and what fixed it.** The mod sent `floor(image_index)` in a `u8` - nine
+tenths of the information thrown away - and ran a **second, local animation cycle** on top of
+the peer's. The owner saw exactly that: "dust appears under the mock but it is not animated",
+and before it a six-step stutter. Both are gone once the frame travels as a **fraction**
+(hundredths, `u16`) and the puppet is drawn at the peer's interpolated frame, carried between
+packets at a rate **measured from the packets themselves** - and the roll then comes for free,
+because the roll *is* that counter.
+
+`frame 2` appearing twice in two POS lines (7 px apart, 20 packets/s) is what the earlier
+round concluded "the game holds a walk frame for ~6 frames" from. That reading was not wrong
+about the frame rate, and it was wrong about the field: it is a timer, so the "frames" are
+0.15 apart.
+
+### `asset_get_index` answers a miss with **0**, and `>= 0` accepts it (2026-10-22)
+
+The notes already said "`asset_get_index` returns 0 for not found, not -1", and the code went
+on to write `if (idx >= 0) array_push(watch, idx)` anyway - which **accepts the miss** and
+puts object index 0 into the watch list. Object 0 is a real object, so the census then walks
+the wrong object, finds nothing, and **looks perfectly healthy while reporting nothing**. The
+owner's report ("the mob is still not there") was the only sign.
+
+The guard is `> 0` now, and the answers are printed once per name so the next session knows
+which names resolve. **A "not found" that is 0 and passes a `>= 0` check is the exact shape of
+a silent failure** - worth a rule of its own: *when a lookup has a sentinel value, assert on
+the sentinel, not on "not negative".*
+
+### The mob: watch by what an object *carries*, not by its name (2026-10-22)
+
+`OnMobSpawn`/`OnMobDeath` are names the loader knows (PencilPal defines them), but its
+handlers are `return; // WIP` so nobody had seen them fire - and a live run of this mod's
+handlers produced nothing either, standing next to a slime.
+
+Rather than keep guessing which object is a slime, the census now decides **by the field**:
+walk the live world once, and every object that has an instance carrying `hp` is a candidate
+enemy (the player is excluded by object index). `variable_instance_exists` is the test the
+reference mod proves the loader knows. That makes the sync independent of names, of the
+island, and of whether the mob events fire.
+
+**Still open:** the enemy's HP (the census reads and prints `hp`/`hpMax` under the field
+test, so the next run says whether they are readable), the positions of enemies once they
+chase a player, and the enemy's death when the event does not fire.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
