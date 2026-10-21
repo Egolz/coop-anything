@@ -781,42 +781,49 @@ round concluded "the game holds a walk frame for ~6 frames" from. That reading w
 about the frame rate, and it was wrong about the field: it is a timer, so the "frames" are
 0.15 apart.
 
-### The two notes about the index disagree by a factor of 4, and the wire is the one that counts (2026-10-22, unresolved)
+### The index is a free-running timer, NOT the walk - the probe settled it (2026-10-22, VERIFIED LIVE)
 
-Asked to make the puppet's walk smooth, the code was read for **every** cause of jerking rather
-than the first one found, and there are three. Two are in the mod and are fixed (M5i): the frame
-**froze** between packets and was drawn as `floor(last value)`, and the roll **froze mid-turn**
-because `_dt` was computed inside the position block, which only runs while the puppet has a gap
-to close.
+The previous note said `objPlayer.image_index` **is** the walk, counted in steps, on the strength of
+one line in an old wire log ("15 px of walking moved the index 3.15"). A probe line was added to
+settle it, and it says the opposite, twice over:
 
-The third is not in the mod, and it is the biggest:
+    idx 120 d 0   px 15   moved 0    <- the player stood still, the index did not move
+    idx 105 d 585 px 76   moved 0    <- then ran a whole cycle (5.85 units) while walking 76 px
+    pos 667,672 frame 2.55 -> pos 671,672 frame 3.00    <- +0.45 for 4 px
+    pos 676,672 frame 3.45 -> pos 679,672 frame 3.90    <- +0.45 for 3 px
+    pos 681,672 frame 4.35 -> ...                       <- +0.45 for 2 px
 
-    the owner's own wire log:  0.22 index-units per packet at 20 packets/s  =  4.4 units/s
-    a six-unit cycle at that rate:                                          1.36 s
-    this repo's own arithmetic (15 px -> +3.15, 4.76 px per unit):           0.32 s
+**The frame advances +0.45 per packet no matter how far the player moved** (nine units a second), and
+it **keeps advancing while the player is not moving**. So it is a free-running timer, tied to
+neither the walk nor the speed, and this is the whole of the owner's report:
 
-**4.26× apart - and `SPAWN_ANIM_SPEED` is 4.** That is exactly the coincidence this project has
-been wrong about before (the `/2` above was the same move), so it is **measured, not assumed**:
-`CoopSendPos` now emits one line every two seconds while the player moves -
+> the mock still uses walk animation while standing still, and uses only the left leg's animation
 
-    idx probe: idx <index> d <growth> delta px <distance walked> rate <px per index-unit> moved 0|1
-
-- and the answer decides which is true:
-
-| `rate` comes out near | what it means |
+| what was believed | what is true |
 |---|---|
-| **4.76** | the index **is** the walk clock; the wire number is right and only the packet cadence needed fixing |
-| **19** | the index runs four times too slowly to be the walk - the puppet has been animated off the **wrong clock**, and that, not packet stepping, is why it looks wrong |
+| `image_index` is the walk, counted in steps | it is a **free-running timer**; it runs while standing still and ignores distance |
+| a cycle is six units of *walking* | a cycle is six units of *timer* - 0.67 s, unrelated to px |
+| one index-unit is 4.76 px | **12.2 px** per unit while walking (33/2.70, 76/5.85, 75/5.85 - the low samples are the `moved 0` rows and are not distances) |
 
-The sender writes `objPlayer.image_index` raw (no division anywhere in the code), and the player's
-body is drawn from a **constant asset** with the instance's `sprite_index` at 0 - which is the
-reason to suspect the second row rather than the first: the instance may be advancing a timer for
-a sprite the player does not use.
+**The fix is to stop using it as the frame.** The puppet drives its **own** six-frame cycle: whether
+to animate is the peer's `"walk"`/`"idle"` flag (what that field actually means), how fast is the
+ground its body covers at 12.2 px per unit, and the cycle is the sprite's own frame count - asked
+with `sprite_get_number`, because a frame past a sprite's end draws **nothing**. Standing still
+**holds** the frame. Verified as a test, not an opinion:
 
-**The lesson is the same as the `/2` lesson, one round later:** two numbers in the same file
-described the same object 4× apart and neither was reconciled before code was written on top. A
-probe line costs nothing and settles it. *When two measurements of one thing disagree, measure it
-again before choosing either.*
+    standing still: the old way changed the frame 16 times, the new way 0
+    walking 1 s:    follows the distance exactly (gap 0.000 units)
+
+**The "only the left leg" half is a second, separate cause**, and worth keeping apart from the
+first: the body sprite has been **`sprPlayerIdle`** whatever the peer was doing - the mock sends
+`sprite = -1`, so the fallback was always the idle one, and a running frame drawn on an idle sprite
+is one stance with a leg picked by a counter. The fallback picks `sprPlayerWalk` for a walking peer
+now.
+
+**The lesson, and it is the same one twice in two rounds:** the repo held **two** measurements of
+the same object that disagreed by ~4x (4.76 vs 12.2 px per unit, and 0.32 s vs 1.36 s per cycle),
+and code went on top of both before either was reconciled. *When two numbers about one thing
+disagree, the answer is a probe, not an average and not a choice.*
 
 ### `while` IS proven in this loader - by our own code, not by the reference mod (2026-10-22)
 
