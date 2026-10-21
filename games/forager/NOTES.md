@@ -402,6 +402,28 @@ always been the host):
 * the mock's scripted `RESOURCE_DESTROY` is **destructive** (it takes a tree out of the
   client's island), so it is off by default and only the offline test turns it on.
 
+### The world grid: corners, centres, and a structure's 2x2 footprint (2026-10-21)
+
+**The world's 16 px cell has two reference points, and mixing them up is a real bug.**
+
+* a **structure** stands on the **corner** of a cell: `x mod 16 = 0`;
+* a **natural object** (a tree, a rock, a bush) sits at the cell's **centre**: `x mod 16 = 8`;
+* a structure covers a **2x2 block** of cells (32x32 px), whose **centres are at +/-8 from the
+  corner** it stands on.
+
+So the cell centre is *inside* the footprint of the structure that owns the corner next to it.
+The host's placement check asks exactly that question - it snaps to `round(v/16)*16` and samples
+the four cells at `+/-8` - and the client once asked a *different* one, starting its own search
+from the cell centre. The result was both halves of one report: **a furnace half a cell off the
+lattice, and a furnace standing in a tree** (live, 2026-10-21).
+
+There are two questions, not one:
+
+| | base position | what has to be free |
+|---|---|---|
+| a **peer** | its own coordinates - it stands where it stands, which is not on the lattice at all | the cell it stands in |
+| a **structure** | the cell's **corner** | its whole **2x2** footprint |
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
