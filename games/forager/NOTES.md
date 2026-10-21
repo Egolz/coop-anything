@@ -360,6 +360,48 @@ answer**, which is why the real library was needed to find them:
 The library comes from the Steamworks.NET standalone release and both files match the SHA-256
 the playbook pins. It is **not** committed - it is Valve's.
 
+### The harness: the mock plays the host, and the client's half gets tested (2026-10-21)
+
+The mock peer could only ever be a **client**, so it could assert the bytes that arrived from a
+host but never the world's reaction to them. And the world's reaction is the thing that has to
+be right. So the mock can now play the **host**: it answers a client's `INTENT_PLACE` with a
+`MUTATION_PLACE`, and then sends a **second** mutation the client never asked for, so the
+player sees a structure appear that they did not build.
+
+The offline end-to-end test asserts the confirmation too, so the mock's host side is covered
+without the game.
+
+**What it found, in one run, on a path that had never been executed before** (the mod had
+always been the host):
+
+1. **The client never sent a HELLO.** The mock accepted the connection and completed
+   GameMaker's own handshake, but the mod's async connect event did not arrive - and since
+   `global.coopPeerAlive` is set by the WELCOME, **nothing the mod could send was sent**: not
+   the placement intent, not the loot, not the position. One missing event froze the whole
+   client. The fix is a design change, not a patch: the hello is a **retry** until the host
+   answers, not an event.
+2. **The mock ate the HELLO.** The client's half of the GameMaker handshake starts with 12
+   bytes, but the mock consumed 16 whenever its buffer happened to be that long - and four of
+   those were the start of the HELLO when it arrived in the same TCP segment. A frame that
+   starts four bytes late does not parse, so the first packet after the handshake was simply
+   lost, and the mock reported no error because it was waiting for bytes that would never
+   come.
+3. **The client answered the host's own structure with an intent for it.** The structure
+   event for a structure *we* created arrives a frame later, so the `coopApplyingRemote` flag
+   was already down by the time it fired. The host confirmed that, and confirmed the
+   confirmation, and the game built a row of furnaces marching to the right forever - 1382
+   intents in one session. The structures we create from a host's mutation are now remembered
+   **by id**, and the event checks that list.
+4. **A peer standing in the middle of a lake stayed there**, because the host's search for
+   standable ground was two cells wide. Six cells, spiral, nearest free cell first.
+
+**Two things the harness is not**, worth knowing before trusting it:
+
+* the mock's **hosted** puppet is not a game character, and it picks a spot once and stands
+  still - it does not have a body, an inventory or a save;
+* the mock's scripted `RESOURCE_DESTROY` is **destructive** (it takes a tree out of the
+  client's island), so it is off by default and only the offline test turns it on.
+
 ### Community mod repos (examples of real, buildable mods)
 - `Zamiell/FastCrafting` — https://github.com/Zamiell/FastCrafting — **GPL-3.0**, minimal
   (`fmConfig.json` + `Main.gml`). Shows `ItemEdit(Item.X, ItemData.CraftingTime, speed)`.
