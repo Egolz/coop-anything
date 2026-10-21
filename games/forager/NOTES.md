@@ -752,11 +752,53 @@ local cycle, no interpolation.
 (`5.85 → 0.00`). That reset is the only mark of a roll the wire carries, so the puppet spins
 on it for the roll's own quarter-second. It is **not** `angle`, which never leaves zero.
 
+**And the trigger has to tell a roll from a cycle wrap, or the puppet spins ten times a second.**
+The index wraps `5.85 → 0.00` **every walk cycle** - about ten times a second while walking - so
+"it fell from a real value to near zero" fires on every ordinary step, and the owner saw the
+puppet caught at a random angle ("sometimes turns diagonally"). A real roll is a reset from the
+**middle** of the cycle while the player is moving at roll speed; a wrap comes from the **top**.
+Both conditions are required.
+
+**The `/ 2` in the frame was wrong, and this is worth recording as a pattern.** The first
+version of this fix divided the index by two on the theory that `PLAYER_WALK_SPEED /
+SPAWN_ANIM_SPEED = 22.5` was the index's own rate. The owner's report ("the animation used to be
+better") sent it back to the arithmetic, and the wire log had the answer:
+
+    15 px of walking moved the index 3.15   ->  one index-unit = 4.76 px
+    the cycle runs 0.00 … 5.85 -> 0.00      ->  six index-units a cycle
+    six units at 4.76 px = 28.6 px          ->  0.32 s at 90 px/s  (an ordinary walk cycle)
+
+Dividing by two gave 0.63 s a cycle: **half rate**. The constants were paired up wrong; the
+**measured** px-per-unit was right there and was not used. *Measure the scale, do not pair
+constants.*
+
 
 `frame 2` appearing twice in two POS lines (7 px apart, 20 packets/s) is what the earlier
 round concluded "the game holds a walk frame for ~6 frames" from. That reading was not wrong
 about the frame rate, and it was wrong about the field: it is a timer, so the "frames" are
 0.15 apart.
+
+### The build has a first-party enemy-spawn API, and the search for "an enemy" missed it (2026-10-22)
+
+The slime work spent three rounds trying to **find** an enemy - first by name (`parEnemy`,
+`objSlime`), then by the field `hp` - and the owner's actual request was to **spawn** one. The
+symbol table has the spawn API all along:
+
+    ModEnemySpawn   EnemyCreate   EnemyGet   EnemySetType   ModObjectSpawn   objSlime
+
+plus `DustSpawn`/`DustEntityStep` (dust), `objSummonSkeleton`, `objSlimeKing`, `objSlimePortal`,
+`ForagerSpawnClass`, `ForagerEnemyClass`, `ResourceSpawn`, `CommandSpawn`, `ModNPCSpawn`.
+
+**The lesson is a search lesson.** Looking for "an enemy" finds *classification* names; looking
+for the **verb the task actually needs** ("spawn") finds the API. Index the symbol table by what
+you want to *do*, not by what the thing *is*.
+
+**Signatures are not in `data.win`.** The loader's arity errors are exact and cheap to read, and
+a call made with the **wrong number of arguments cannot create anything** - which is what makes
+probing a spawn signature safe in a live world. The probe (`CoopProbeEnemy`, run automatically
+once per world) asks for `ModEnemySpawn`, `EnemyCreate` and `ModObjectSpawn` and reports through
+the debug channel, so the answer is readable **from outside the game** rather than from a human's
+console: the owner should not be the test harness, and a key press is not a test plan.
 
 ### `asset_get_index` answers a miss with **0**, and `>= 0` accepts it (2026-10-22)
 
