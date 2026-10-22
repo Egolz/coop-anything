@@ -1,8 +1,9 @@
 # Forager co-op mod — design (working document)
 
-Stage: **building.** M0 (toolchain) and the M1 transport layer are done and have been run
-against the live game (2026-10-19/20) — see `NOTES.md`. The world-sync design below is
-still a proposal being validated; API facts are sourced in `NOTES.md`.
+Stage: **building — the mod is playable end to end for walking around.** M0-M4 are done and run
+against the live game; M5 is in progress and its longest piece (the puppet's animation) closed
+2026-10-23. The world-sync design below is validated for land and structures, proposed for the rest;
+API facts are sourced in `NOTES.md`. **See "What is left, in order" for the current plan.**
 
 Code: **https://github.com/Egolz/forager-coop** (GPL-3.0). This folder is the write-up; the
 mod's `.gml` source, its protocol notes and the mock peer live in that repository.
@@ -152,8 +153,69 @@ a client can prove or disprove divergence.
     missing from the snapshot: the **resources** (trees, rocks, bushes), so the two islands
     still have to have the same trees in the same places.
 - **M4 — Steam relay.** Swap DirectTCP for the Spacewar relay backend; no port forwarding.
+  ⏳ `tools/steamlink/` written and verified against real Steam (2026-10-22): a separate Python
+  process loads `steam_api64.dll` via `ctypes` and relays, so the mod still speaks plain TCP to
+  `127.0.0.1`. **The peer-to-peer path with a second account is unverified** (needs a second
+  Steam account and a second machine).
 - **M5 — automated QA.** Two scripted clients that perform fixed mutations and compare
   shared-state hashes; log PASS/FAIL.
+  - **M5k — the puppet's animation.** The second player's body must be as smooth as the player's.
+    This ran to **round 5e** and is the longest single chase in the project, because the symptom
+    ("the puppet bobs too slowly") was in fact **three separate bugs stacked**:
+    1. **M5j** — the walk was time-driven, so the puppet walked in place; it is now movement-driven.
+    2. **M5k8** — the animation clock was `current_time` inside `OnDrawEnd`, where the handler runs
+       ~505x/s and `current_time` ticks ~15 ms, so a sum of gaps came out **14.89x** the wall clock.
+       The bob moved to the **step** clock, with the step length **measured**, not taken from `fps`.
+    3. **M5k8c** — the rate itself was overridden by **packet noise**: a standing peer's jitter
+       (~0.0007 u/ms) passed a `<= 0.0005` gate meant to mean "no reading" and beat the correct
+       0.012. Fixed with a **band** (`CoopIdleUnits()`, one decision in one place) and a floor at
+       the measurement.
+    **Verified live by the owner 2026-10-23: "the mock bobs its head perfectly."** Full history and
+    the lessons are in `NOTES.md` (rounds 1-5e).
+
+## What is left, in order (2026-10-23)
+
+The mod is **playable in the walk-around sense**: two players see each other, the puppet is a real
+sprite with the player's own walk, dust, roll and now a correct idle bob, and land/structures/held
+items/mobs sync. What follows is the honest ordered list, cheapest-and-most-visible first.
+
+**Next up (agreed order):**
+
+1. **The puppet's walk still stutters** — owner's report: *"the mock animates movement slowly and
+   freezes"*. The walk branch in `OnDrawEnd` still advances `coopPeerFrameF` from the **same
+   `current_time`** that was just proven wrong for the idle bob (14.89x). The fix is the same one
+   M5k8 applied to the bob: advance it on the **step** clock. It was left alone while the bob was
+   being chased only because walking was previously *reported working* — that report is now suspect.
+2. **The slime's model.** `ModEnemySpawn` spawns `objModEnemy`, which has no body; it needs
+   `objSlime`'s (or the named enemy's) sprite so a synced mob looks like the mob it is.
+3. **The dust animation** on the puppet, and the **roll** — verified as working once, but on the same
+   untrustworthy draw clock, so both should be re-checked after (1).
+4. **The `Co-op: N thing(s) left the world` line** — the diff-based census still reports removals
+   that are not removals (cosmetic noise in the log).
+
+**Bigger pieces, in dependency order:**
+
+5. **Zone awareness.** MVP syncs only the host's zone (`objPlayer.room`). Players in different zones
+   currently see only presence, and the puppet is drawn even when the peer is in another room.
+6. **Terrain edits (M2.3).** Tile break/place has **no event** — the host must detect tile changes
+   itself. Land *snapshot* (M3.1) works; live edits do not.
+7. **Resources in the join snapshot.** Trees, rocks and bushes are **not** in the snapshot, so the two
+   islands must already have identical resources. `OnStructureSpawn` covers buildings; there is no
+   equivalent list for natural objects, so this needs the same "watch the world" trick.
+8. **The story, the Void, temples, achievements.** Deliberately out of the MVP: story/world is shared
+   in principle, but bosses, the Void and progression triggers are unsynced. The owner's broader goal
+   names these as *wanted*, so they are future work, not non-goals forever.
+9. **Steam relay peer-to-peer verification**, then **a real two-machine test** — the one thing no
+   amount of mock work can substitute for. Needs a second Steam account and a second PC.
+10. **The skill/achievement/inventory question.** Each player currently runs **their own save**, so
+    skills and inventory are personal by construction. Whether the *second* player can level skills
+    and earn achievements in a shared world is a design question still open — see `NOTES.md`.
+
+**Known environment limits (not bugs):**
+
+- Forager refuses to run twice on one PC, so full two-client tests need a second machine or VM. Every
+  result so far is *one real client + the mock peer*, and that is stated honestly everywhere.
+- The owner must press **COMPILE** in the in-game mod menu; the build cannot be reloaded from outside.
 
 ## Testing
 

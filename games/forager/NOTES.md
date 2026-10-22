@@ -1061,6 +1061,70 @@ checked against each other.
   full cycle could pass between two samples and the fall was never seen - the counted `0.24/s` was an
   **aliasing artefact**, not the animation. Instrument and subject must share a clock.
 
+**Round 5e: the last factor was a GATE, not a rate - and the operands found it (M5k8b / M5k8c).**
+
+With the bob on the step clock, one reading showed the clock itself was finally trustworthy:
+
+```
+bob branches over 6264 ms: step idle 73.10/s, draw idle 72.30/s, dead 0/s
+  | idle added 13.62 frames -> 2.17 frames/s | step 25.26 ms (raw 25 ms = 39.50 steps/s)
+```
+
+`step idle` = `draw idle` = one branch entry per step (**the 290-vs-60 mystery is gone**), and the
+measured step matches the `bob measure` steps/s. **And the puppet was still 0.15/s** - so a second,
+independent bug was now visible: `idle added` was **10.19x smaller** than `units * step * ticks`.
+
+M5k8b therefore recorded the **operands** rather than the product, and one line named the cause:
+
+```
+OPERANDS units 0.00 x step 44.97 = 0.03 frames/step
+```
+
+**`units` printed as `0.00` where the period asks for `0.012`.** The rate in use was ~0.0007 u/ms - a
+factor of ~18, the last hiding place of the factor-of-ten family. The cause was not a number but a
+**test**:
+
+```gml
+var _ib_units = global.coopPeerStepRate;
+if (_ib_units <= 0.0005) { ...use the period... }     // <- this line
+```
+
+A **standing** peer's index does not advance, so its honest rate is **0** - the owner's own probe
+proves it (`imgidx 4.20` five dumps in a row). But the mock's ~20 Hz packets jitter, so the difference
+is occasionally a hair above zero (~0.0007). That value survives the `if (< 0) = 0` clamp, **prints as
+`0.00`**, and **passes `<= 0.0005`** - so packet noise overrode a correct period and the bob ran ~18x
+slow while every printed number looked right.
+
+**M5k8c fixes the shape of the question**, which is the actual lesson: not *"is this rate positive"*
+but **"is this a real idle rate"**.
+
+1. **One shared macro `CoopIdleUnits()`** decides the rate; `OnStep` calls it, the draw handler no
+   longer derives anything. Two places deriving one number separately is *how* they came to disagree.
+2. **A band, not a threshold.** The peer rate is honoured only between a tenth of the period's own
+   rate (10x slow is already visibly wrong) and the walk ceiling. Below the floor it is discarded.
+3. **A floor at the measurement**, in the POS reader, so noise is zeroed where it is produced rather
+   than re-judged by every consumer.
+4. The probe prints the operands to **five decimals**, so `0.00` can no longer hide an error.
+
+`test_idle_bob.py` grows a check for exactly this: noise 0.0007 -> the period's 0.012, zero -> the
+period, a plausible 0.018 -> honoured, 0.9 -> rejected. Reverting to a bare `> 0` test fails the file.
+
+**Verified live by the owner 2026-10-23: "the mock bobs its head perfectly."** The reported symptom -
+seventeen rounds of it - is closed.
+
+* **Lesson: a tolerance in a `<=` test is a design decision, and `0.0005` was chosen to mean "no
+  reading" while actually admitting every *noisy* reading.** When a measurement is expected to be
+  exactly zero in the common case, the floor must be set from **what the value means**, not from what
+  the noise looks like - and the noisy case must be named in the comment or the next reader will
+  tighten it again.
+* **Lesson: print the OPERANDS, not the product.** The product was 10x wrong for two rounds while
+  every summary line read correctly; the operands named the culprit in one dump. A derived number can
+  only be checked against the numbers it was derived from.
+* **Lesson: one decision, one place.** The rate was resolved in two events with two copies of the same
+  `if`. Consolidating it into `CoopIdleUnits()` is what makes "the two agree" a property of the code
+  rather than a thing to remember.
+
+
 **Finding: `sprite_get_speed` is 0 for every player sprite, and 0 does not mean "not animated".** In
 GameMaker a sprite speed of `0` means *"use the room's default"*. Round 1 read it as a real rate, fell
 through to a made-up `0.006 units/ms`, and produced a **1.00 s** cycle against the player's **0.67 s** -
