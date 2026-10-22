@@ -941,10 +941,12 @@ fired. *A fix that is right in itself still needs the measurement to confirm it 
 **Lesson: when a rate is wrong by a whole factor, look for the multiplier before retuning the rate.**
 Four rounds were spent choosing between two numbers that were both wrong, and the ten was a `min()`.
 
-**The lesson about scale: the game runs at ~14 steps/s, not 60** (measured, M5k5). Every note in the
-code that converted steps to seconds at "60 fps" was a guess, and the probe that measures the rate had
-its own `~2 s at 60 fps` comment wrong by the same factor. Anything that must be right in *seconds* is
-now read from `current_time`, which is the only clock that does not need this number.
+**The lesson about scale: the game's logic runs at ~44-58 steps/s, not 60 and not 14** (measured,
+M5k8). M5k5 read "~14 steps/s" from a probe that was counting in a *different* event than the one it
+described; the honest step rate has been in every `idx probe` dump since M5k3f (`dt 17.97`) and it was
+misread. Anything that must be right in *seconds* is read from the **step count or the gap between
+steps** - `current_time` is honest *at step rate* but not at draw rate, where it repeats the same
+millisecond ~7 times.
 
 **The current code (M5k4/M5k5) is driven by the period, not a rate.** `_COOP_IDLE_PERIOD_S = 0.5`, and
 the sprite's own frame count does the conversion (`frames / period`), so the single tunable number is
@@ -972,6 +974,8 @@ average over both states would describe neither. The line ends
 | 4 | **`image_speed` does not describe the drawing** | chose a rate where a period was needed |
 | 5 | **the period is 0.5 s** | left a `_dt` clamp that ate 90% of it |
 | 5b | **the clamp is a tenth, not a rate** | - |
+| 5c | **the rate is measured in-game** (`F3`), and the puppet's `_dt` internals are visible | drew a cycle count in a different event than the one advancing it (aliased to 0.24/s) |
+| 5d | **the bob runs on the STEP clock**; the step length is measured; `current_time` at draw rate is 14.89x | - |
 
 The working halves - **draw sprite 0**, **the right clock** and **a clock that is allowed to run** -
 were each discovered in a different round, and each round applied one while inferring the others from a
@@ -983,7 +987,79 @@ the next report shows it.* Three rounds in a row fixed a real thing and left a r
 source and the rate is **derived** from it and the frame count, ~2 bobs/s is what comes out, the two
 rejected reports **bracket** it (1.5 < 2.0 < 5.9), the period survives a change of frame count, and -
 pinning the observed failure to its line - **a 1000 ms draw under the old 100 ms ceiling reproduces
-5.0 s per bob while under the new 1000 ms ceiling it reproduces 0.50 s**.
+5.0 s per bob while under the new 1000 ms ceiling it reproduces 0.50 s**. It also gained a
+**structural** check for M5k8 (below), with comments stripped so prose cannot satisfy it.
+
+**Round 5d: the rate was right, and it was never a rate - the DRAW CLOCK is the bug (M5k7 / M5k7b /
+M5k8, 2026-10-23).**
+
+M5k6's F3 instrument finally put both models on one line, and the numbers agreed on the target and
+disagreed on the result:
+
+```
+bob measure over 4094 ms: PLAYER 2.03 bob/s (1.05 u/s) | PUPPET 0.18 bob/s (0.09 u/s)
+rate asked: period 0.50 s = 0.012 u/ms | peerRate 0.00 u/ms
+bob internals: idleFrameF 3.36 / 6 frames, idleSprite 0, walking 0, alive 1
+```
+
+The owner's own model bobs at **2.03/s** - the eye and the code agree on the target; the code asks for
+**2/s**; the puppet does **0.18/s**, a factor of **11**. Three rounds had hunted a factor and found
+`min()`/`max()`/clamps; this time every term of the product was already measured and correct.
+
+**M5k7 therefore counted the branch itself** - `walk` / `idle` / `dead` per second, the **units added**,
+and the **sum of `_dt`** it was given. The reading was not the expected one:
+
+```
+bob branches over 4094 ms: walk 0.90/s, idle 289.60/s, dead 0/s
+  | idle added 31.32 frames, dt sum 22750 ms -> 7.65 frames/s
+```
+
+**The branch runs ~290x/s** while the game's logic runs ~44-58 steps/s - and its `_dt` sums to
+**22750 ms over 4094 ms of wall clock**. A sum of elapsed times cannot exceed the time it was measured
+over unless *the same interval is being counted several times*.
+
+**M5k7b added the audit that named it** - handler entries (`outer`), entries past the exits (`enter`),
+and the **unclamped** `current_time` gap:
+
+```
+bob clock over 4121 ms: outer 505.70/s, enter 122.70/s
+  | raw gap sum 61377 ms (wall 4121 ms, ratio 14.89x)
+```
+
+**`OnDrawEnd` is entered ~505x/s in this build, and `current_time` ticks in ~15 ms.** Seven calls in
+eight see the *same* millisecond, and `if (_dt < 1) _dt = 1;` then charges that shared millisecond as a
+full 1 ms on every one of those calls. **A rate expressed in milliseconds means nothing inside this
+draw event.** The arithmetic was right the whole time; the unit was a fiction. (The same probe had been
+printing `dt 17.97` from `OnStep` at ~44-58 steps/s all along - the step clock was honest and the draw
+clock was not, in the *same build, in the same session*.)
+
+**M5k8 moves the idle bob to the step clock.** `coopIdleFrameF` is advanced in `OnStep` (once per step,
+`units * step_ms`) and `OnDrawEnd` only **picks the frame** to draw. Two follow-on decisions, both to
+avoid re-importing the bug:
+
+1. **The step length is measured, not `fps`.** `fps` is the *draw* rate in this build (~505/s), so
+   `1000 / fps` would have been wrong by an order of magnitude - i.e. it would have reproduced the
+   symptom from the other side. `coopStepMs` is an exponential average of the real `current_time` gap
+   between steps: the same value the probe had been printing honestly.
+2. **The period stays the source of truth** (`coopIdlePeriodS = 0.5 s`), converted by the sprite's own
+   frame count.
+
+The probe now prints the measured step **beside** the outcome (`step 22.6 ms (raw 18 ms = 44.2 steps/s)
+-> expect 2.00 bobs/s`), so one F3 reading contains both the input and the result and they can be
+checked against each other.
+
+* **Lesson: when every factor of a product is measured and the product is still wrong, suspect the
+  UNIT, not the factors.** Five rounds tuned a rate expressed in milliseconds; the milliseconds
+  themselves were the fiction. The tell - a sum of intervals exceeding wall clock - was available from
+  the first branch count and is the thing to look for.
+* **Lesson: `current_time`, `fps` and the frame rate answer three different questions in this build.**
+  ~44-58 logical steps/s, ~505 draw-handler entries/s, and a ~15 ms `current_time` resolution. Any
+  "per second" derived from the wrong one of the three is wrong by 10x or more. The **step** is the
+  clock that has never disagreed with itself.
+* **Lesson: a counting instrument that counts in the wrong event measures the wrong thing.** The
+  M5k6 cycle counter read `coopIdleFrameF` from `OnStep` while it was advanced from `OnDrawEnd`, so a
+  full cycle could pass between two samples and the fall was never seen - the counted `0.24/s` was an
+  **aliasing artefact**, not the animation. Instrument and subject must share a clock.
 
 **Finding: `sprite_get_speed` is 0 for every player sprite, and 0 does not mean "not animated".** In
 GameMaker a sprite speed of `0` means *"use the room's default"*. Round 1 read it as a real rate, fell
