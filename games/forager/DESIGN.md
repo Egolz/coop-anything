@@ -181,11 +181,13 @@ items/mobs sync. What follows is the honest ordered list, cheapest-and-most-visi
 
 **Next up (agreed order):**
 
-1. **The puppet's walk still stutters** — owner's report: *"the mock animates movement slowly and
-   freezes"*. The walk branch in `OnDrawEnd` still advances `coopPeerFrameF` from the **same
-   `current_time`** that was just proven wrong for the idle bob (14.89x). The fix is the same one
-   M5k8 applied to the bob: advance it on the **step** clock. It was left alone while the bob was
-   being chased only because walking was previously *reported working* — that report is now suspect.
+1. ~~**The puppet's walk stutters**~~ — **done in M5k9.** The walk had the same untrustworthy
+   `current_time` clock as the bob, but the real answer was simpler: legs turn with the **ground
+   covered**, so the branch now advances by `_moved_px / 12.2` with **no time term at all**. Verified
+   by ratio live (`moved 1386.70 px -> added 113.66 units | expect 113.66`), which holds at any frame
+   rate. M5k9b then fixed the measuring window itself (a phantom 4x that was counters spanning the
+   whole session beside a ~6 s window). **Open: the owner has not yet said whether the walk now
+   *looks* smooth** — measurement says the mechanism is exact, the eye is the last word.
 2. **The slime's model.** `ModEnemySpawn` spawns `objModEnemy`, which has no body; it needs
    `objSlime`'s (or the named enemy's) sprite so a synced mob looks like the mob it is.
 3. **The dust animation** on the puppet, and the **roll** — verified as working once, but on the same

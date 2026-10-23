@@ -1176,6 +1176,60 @@ And the round's quieter lesson, again: two comment blocks in the draw handler st
 deleted. *A comment that disagrees with the code next to it is how the next wrong guess gets written*
 - this file has now had exactly that happen twice.
 
+**Round 5f: the walk moves to distance, and a phantom 4x in the instrument (M5k9 / M5k9b).**
+
+The walk had the same shape of bug as the bob and the same root cause:
+
+```gml
+global.coopPeerFrameF += global.coopPeerSpeed * _dt / _ppu;    // `_dt` in OnDrawEnd
+```
+
+`_dt` there is **not** real milliseconds (the M5k7b audit: ~505 handler entries/s against a ~15 ms
+`current_time` tick, a **14.89x** gap sum). Applied to the legs that is a walk animating ~15x too
+fast, which aliases into exactly the owner's *"animates movement slowly and freezes"*.
+
+**The walk needed no clock at all.** Legs turn with the ground covered, not with wall time - the same
+principle M5j applied to *when* the puppet walks, never applied to *how fast the legs move*:
+
+```gml
+var _moved_px = point_distance(_prevDrawX, _prevDrawY, global.coopDrawX, global.coopDrawY);
+global.coopPeerFrameF += _moved_px / 12.2;      // 12.2 px per index-unit (live)
+```
+
+`_prevDrawX/Y` are taken immediately before the position block moves the puppet, so the frame advances
+by **the distance of that very frame**. There is no time term in the branch, so no clock - fast, slow,
+stalled or duplicated - can distort it, and the animation cannot drift from the motion. The 24 px
+per-frame step cap still bounds a roll.
+
+**Verified live 2026-10-23:** `moved 1386.70 px -> added 113.66 units | expect 113.66 units from
+distance` - exact, and it is a **ratio**, so it holds at any frame rate.
+
+Then **the instrument contradicted itself**, and that was the round's real lesson:
+
+```
+step idle 165.10/s                     <- 165/s?
+step 24 ms (raw 24 ms = 41.60 steps/s) <- but the step measures 41.6/s
+idle added -> expect 9.39 bobs/s
+bob measure: PUPPET 2.03 bob/s         <- the bob's own counter says 2
+```
+
+165 / 41.6 = **4x**, and 9.39 fights 2.03 in the same report. The cause was **not** the animation: the
+F3 **arming** block reset the bob's cycle counters but **not** the window counters
+(`coopIdleTicks`, `coopWalkTicks`, `coopIdleDraws`, `coopIdleUnitsAdded`), which were only zeroed when
+a report *printed*. So the **first press of a session** divided counters accumulated since mod load
+(~35 s) by a ~6.4 s window. **M5k9b resets them at arming** and changes nothing about the animation.
+
+The invariant that would have caught it in one look is now printed: **`idle/step`**, which must be
+`<= ~1.0` when the peer stands (it read 4.4). A structural test asserts the arming block zeroes all
+four counters, verified to fail when one is removed.
+
+* **Lesson: when one report contains two numbers that cannot both be true, suspect the instrument
+  before the code.** Every rate in that line comes from a counter, and checking that they share one
+  window is cheaper than hunting a nesting bug that never existed.
+* **Lesson: a `ratio` check survives a broken window; an absolute rate does not.** The walk line read
+  correctly throughout because both sides of it were inflated together - which is also why it could
+  not detect the problem. Keep both kinds: ratio for the mechanism, absolute for the instrument.
+
 ### `while` IS proven in this loader - by our own code, not by the reference mod (2026-10-22)
 
 A first pass added a checker warning against `while`/`do`, on the evidence that the reference mod
